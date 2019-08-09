@@ -1,6 +1,6 @@
 use core::convert::TryFrom;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DescriptorType {
     Device = 1,
     Configuration = 2,
@@ -30,7 +30,7 @@ impl TryFrom<u8> for DescriptorType {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C, packed)]
 pub struct DeviceDescriptor {
     pub b_length: u8,
@@ -49,7 +49,7 @@ pub struct DeviceDescriptor {
     pub b_num_configurations: u8,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C, packed)]
 pub struct ConfigurationDescriptor {
     pub b_length: u8,
@@ -62,7 +62,7 @@ pub struct ConfigurationDescriptor {
     pub b_max_power: u8,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C, packed)]
 pub struct InterfaceDescriptor {
     pub b_length: u8,
@@ -76,7 +76,7 @@ pub struct InterfaceDescriptor {
     pub i_interface: u8,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 #[repr(C, packed)]
 pub struct EndpointDescriptor {
     pub b_length: u8,
