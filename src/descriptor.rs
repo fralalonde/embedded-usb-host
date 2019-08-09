@@ -1,5 +1,6 @@
+use core::convert::TryFrom;
+
 #[derive(Clone, Copy, Debug)]
-#[repr(u8)]
 pub enum DescriptorType {
     Device = 1,
     Configuration = 2,
@@ -9,6 +10,24 @@ pub enum DescriptorType {
     DeviceQualifier = 6,
     OtherSpeed = 7,
     InterfacePower = 8,
+}
+
+impl TryFrom<u8> for DescriptorType {
+    type Error = &'static str;
+
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            1 => Ok(Self::Device),
+            2 => Ok(Self::Configuration),
+            3 => Ok(Self::String),
+            4 => Ok(Self::Interface),
+            5 => Ok(Self::Endpoint),
+            6 => Ok(Self::DeviceQualifier),
+            7 => Ok(Self::OtherSpeed),
+            8 => Ok(Self::InterfacePower),
+            _ => Err("invalid descriptor"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
