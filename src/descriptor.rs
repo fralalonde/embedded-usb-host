@@ -1,4 +1,5 @@
 #[derive(Clone, Copy, Debug)]
+#[repr(u8)]
 pub enum DescriptorType {
     Device = 1,
     Configuration = 2,
@@ -65,4 +66,31 @@ pub struct EndpointDescriptor {
     pub bm_attributes: u8,
     pub w_max_packet_size: u16,
     pub b_interval: u8,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use core::mem;
+
+    #[test]
+    fn device_descriptor_layout() {
+        assert_eq!(mem::size_of::<DeviceDescriptor>(), 18);
+    }
+
+    #[test]
+    fn configuration_descriptor_layout() {
+        assert_eq!(mem::size_of::<ConfigurationDescriptor>(), 9);
+    }
+
+    #[test]
+    fn interface_descriptor_layout() {
+        assert_eq!(mem::size_of::<InterfaceDescriptor>(), 9);
+    }
+
+    #[test]
+    fn endpoint_descriptor_layout() {
+        assert_eq!(mem::size_of::<EndpointDescriptor>(), 7);
+    }
 }

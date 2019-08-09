@@ -1,3 +1,5 @@
+//! Traits for a hardware-agnostic USB host interface.
+
 #![no_std]
 
 mod descriptor;
