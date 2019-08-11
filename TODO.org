@@ -1,6 +1,5 @@
 * Documentation
   - README.md
-  - Literally every trait and method.
 * Do not require `core::fmt::Debug` on drivers.
 This is a temporary measure so I can show which driver had an issue
 when something goes wrong, but it's much more expansive than needed.

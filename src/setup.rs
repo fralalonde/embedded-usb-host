@@ -1,3 +1,12 @@
+//! A collection of structures for use in setting up devices during
+//! enumeration.
+//!
+//! These types are all defined in §9.3 of the USB 2.0 specification.
+//!
+//! The structures defined herein are `repr(C)` and `repr(packed)`
+//! when necessary to ensure that they are able to be directly
+//! marshalled to the bus.
+
 use core::convert::{TryFrom, TryInto};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -193,4 +202,44 @@ pub struct SetupPacket {
     pub w_value: WValue,
     pub w_index: u16,
     pub w_length: u16,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use core::mem;
+    use core::slice;
+
+    #[test]
+    fn setup_packet_layout() {
+        let len = mem::size_of::<SetupPacket>();
+        assert_eq!(len, 8);
+        let sp = SetupPacket {
+            bm_request_type: RequestType::from((
+                RequestDirection::HostToDevice,
+                RequestKind::Class,
+                RequestRecipient::Endpoint,
+            )),
+            b_request: RequestCode::GetInterface,
+            w_value: WValue::from((0xf0, 0x0d)),
+            w_index: 0xadde,
+            w_length: 0xefbe,
+        };
+        let base = &sp as *const _ as usize;
+        assert_offset("bm_request_type", &sp.bm_request_type, base, 0x00);
+        assert_offset("b_request", &sp.b_request, base, 0x01);
+        assert_offset("w_value", &sp.w_value, base, 0x02);
+        assert_offset("w_index", &sp.w_index, base, 0x04);
+        assert_offset("w_length", &sp.w_length, base, 0x06);
+
+        let got = unsafe { slice::from_raw_parts(&sp as *const _ as *const u8, len) };
+        let want = &[0x22, 0x0a, 0xf0, 0x0d, 0xde, 0xad, 0xbe, 0xef];
+        assert_eq!(got, want);
+    }
+
+    fn assert_offset<T>(name: &str, field: &T, base: usize, offset: usize) {
+        let ptr = field as *const _ as usize;
+        assert_eq!(ptr - base, offset, "{} register offset.", name);
+    }
 }
