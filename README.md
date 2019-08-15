@@ -1,5 +1,8 @@
 # usb-host
 
+[![Documentation](https://docs.rs/usb-host/badge.svg)](https://docs.rs/usb-host)
+[![Testing](https://api.travis-ci.org/repos/bjc/usb-host.svg?branch=master)](https://travis-ci.org/bjc/usb-host)
+
 This is a collection of traits that mediate between drivers for USB
 peripherals and USB Host.
 
