@@ -13,7 +13,7 @@ use core::convert::{TryFrom, TryInto};
 #[repr(C)]
 pub struct RequestType(u8);
 impl RequestType {
-    pub fn recipient(&self) -> Result<RequestRecipient, &'static str> {
+    pub fn recipient(self) -> Result<RequestRecipient, &'static str> {
         const POS: u8 = 0;
         const MASK: u8 = 0x1f;
         (self.0 & (MASK << POS)).try_into()
@@ -26,7 +26,7 @@ impl RequestType {
         self.0 |= v as u8 & MASK;
     }
 
-    pub fn kind(&self) -> Result<RequestKind, &'static str> {
+    pub fn kind(self) -> Result<RequestKind, &'static str> {
         const POS: u8 = 5;
         const MASK: u8 = 0x3;
         (self.0 & (MASK << POS)).try_into()
@@ -39,7 +39,7 @@ impl RequestType {
         self.0 |= v as u8 & MASK;
     }
 
-    pub fn direction(&self) -> Result<RequestDirection, &'static str> {
+    pub fn direction(self) -> Result<RequestDirection, &'static str> {
         const POS: u8 = 7;
         const MASK: u8 = 0x1;
         (self.0 & (MASK << POS)).try_into()
@@ -119,7 +119,7 @@ impl TryFrom<u8> for RequestRecipient {
 #[repr(C)]
 pub struct WValue(u16);
 impl WValue {
-    pub fn w_value_lo(&self) -> u8 {
+    pub fn w_value_lo(self) -> u8 {
         const POS: u8 = 0;
         const MASK: u16 = 0xff;
         ((self.0 >> POS) & MASK) as u8
@@ -128,11 +128,11 @@ impl WValue {
     pub fn set_w_value_lo(&mut self, v: u8) {
         const POS: u8 = 0;
         const MASK: u8 = 0xff;
-        self.0 &= !((MASK as u16) << POS);
-        self.0 |= ((v & MASK) as u16) << POS;
+        self.0 &= !(u16::from(MASK) << POS);
+        self.0 |= u16::from(v & MASK) << POS;
     }
 
-    pub fn w_value_hi(&self) -> u8 {
+    pub fn w_value_hi(self) -> u8 {
         const POS: u8 = 8;
         const MASK: u16 = 0xff;
         ((self.0 >> POS) & MASK) as u8
@@ -141,8 +141,8 @@ impl WValue {
     pub fn set_w_value_hi(&mut self, v: u8) {
         const POS: u8 = 8;
         const MASK: u8 = 0xff;
-        self.0 &= !((MASK as u16) << POS);
-        self.0 |= ((v & MASK) as u16) << POS;
+        self.0 &= !(u16::from(MASK) << POS);
+        self.0 |= u16::from(v & MASK) << POS;
     }
 }
 impl From<(u8, u8)> for WValue {
