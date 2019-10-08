@@ -1,0 +1,8 @@
+* Since 0.1.1
+  - Travis integration.
+  - Clippy lints.
+
+* Since 0.1.0
+  - Unit tests added for in-memory descriptor layout.
+  - Implementations of `TryFrom` and `PartialEq`.
+  - More documentation.
