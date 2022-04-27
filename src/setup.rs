@@ -195,7 +195,7 @@ impl Default for RequestCode {
 }
 
 #[derive(Copy, Clone, Debug)]
-#[repr(C, packed)]
+#[repr(C)]
 pub struct SetupPacket {
     pub bm_request_type: RequestType,
     pub b_request: RequestCode,

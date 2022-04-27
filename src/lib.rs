@@ -9,14 +9,24 @@
 
 #![no_std]
 
+#[macro_use]
+extern crate defmt;
+
 pub mod descriptor;
 pub mod setup;
+pub mod address;
+pub mod class;
+pub mod device;
+pub mod parser;
 
+use core::mem;
 pub use descriptor::*;
 pub use setup::*;
+pub use address::*;
 
 /// Errors that can be generated when attempting to do a USB transfer.
 #[derive(Debug)]
+#[derive(defmt::Format)]
 pub enum TransferError {
     /// An error that may be retried.
     Retry(&'static str),
@@ -64,6 +74,7 @@ pub trait USBHost {
 ///
 /// cf §9.6.6 of USB 2.0
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(defmt::Format)]
 pub enum TransferType {
     Control = 0,
     Isochronous = 1,
@@ -78,6 +89,14 @@ pub enum TransferType {
 pub enum Direction {
     Out,
     In,
+}
+
+#[derive(defmt::Format)]
+pub struct SingleEp {
+    pub device_address: Address,
+    pub endpoint_address: u8,
+    pub transfer_type: TransferType,
+    pub max_packet_size: u16,
 }
 
 /// `Endpoint` defines the USB endpoint for various transfers.
@@ -152,5 +171,10 @@ pub trait Driver: core::fmt::Debug {
     ///
     /// `usbhost` may be used for communication with the USB when
     /// required.
-    fn tick(&mut self, millis: usize, usbhost: &mut dyn USBHost) -> Result<(), DriverError>;
+    fn tick(&mut self, millis: u64, usbhost: &mut dyn USBHost) -> Result<(), DriverError>;
+}
+
+pub(crate) fn to_slice_mut<T>(v: &mut T) -> &mut [u8] {
+    let ptr = v as *mut T as *mut u8;
+    unsafe { core::slice::from_raw_parts_mut(ptr, mem::size_of::<T>()) }
 }

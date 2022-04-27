@@ -3,9 +3,17 @@ name = "usb-host"
 description = "Traits for USB host driver development."
 version = "0.1.2"
 authors = ["Brian Cully <bjc@kublai.com>"]
-edition = "2018"
+edition = "2021"
 license = "LGPL-3.0-or-later"
 categories = ["no-std", "embedded", "hardware-support"]
 keywords = ["usb", "usb-host", "hal", "peripheral"]
 readme = "README.md"
-repository = "https://github.com/bjc/usb-host.git"
+repository = "https://github.com/fralalonde/usb-host.git"
+
+[dependencies]
+utf16string = { path = "../utf16string", default-features = false, features = ["defmt"] }
+defmt = "0.3"
+hash32 = "0.2"
+
+strum = { version = "0.23", default-features = false }
+strum_macros = "0.23"
