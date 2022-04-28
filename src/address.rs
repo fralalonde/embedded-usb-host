@@ -12,7 +12,7 @@ impl hash32::Hash for Address {
 }
 
 pub struct AddressPool {
-    pool: u128,
+    pool_bits: u128,
 }
 
 impl From<u8> for Address {
@@ -28,17 +28,23 @@ impl From<Address> for u8 {
     }
 }
 
+const FULL_POOL: u128 = u128::MAX >> 1;
+
 impl AddressPool {
     pub fn new() -> Self {
         Self {
-            pool: u128::MAX >> 1,
+            pool_bits: FULL_POOL,
         }
     }
 
+    pub fn reset(&mut self) {
+        self.pool_bits = FULL_POOL
+    }
+
     pub fn take_next(&mut self) -> Option<Address> {
-        let next = self.pool.leading_zeros() as u8;
+        let next = self.pool_bits.leading_zeros() as u8;
         if next <= MAX_DEVICES {
-            self.pool &= !(1 << (128 - (next + 1)));
+            self.pool_bits &= !(1 << (128 - (next + 1)));
             return Some(Address::from(next));
         }
         None
@@ -47,7 +53,7 @@ impl AddressPool {
     pub fn put_back(&mut self, addr: Address) {
         let addr: u8 = addr.into();
         if addr <= MAX_DEVICES {
-            self.pool |= 1 << addr
+            self.pool_bits |= 1 << addr
         }
     }
 }

@@ -35,18 +35,23 @@ pub enum TransferError {
 
     /// A permanent error.
     Permanent(&'static str),
+
+    InvalidDescriptor,
+    EnumerationFailed,
 }
 
 #[derive(Debug)]
 #[derive(defmt::Format)]
 pub enum HostEvent {
     Reset,
-    Ready(device::Device),
+    Ready(device::Device, DeviceDescriptor),
     Tick,
 }
 
 /// Trait for host controller interface.
-pub trait USBHost {
+pub trait UsbHost {
+    fn update(&mut self, addr_pool: &mut AddressPool) -> Option<HostEvent>;
+
     fn max_host_packet_size(&self) -> u16;
 
     /// Issue a control transfer with an optional data stage to
@@ -85,8 +90,9 @@ pub trait USBHost {
 /// The type of transfer to use when talking to USB devices.
 ///
 /// cf §9.6.6 of USB 2.0
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, strum_macros::FromRepr)]
 #[derive(defmt::Format)]
+#[repr(u8)]
 pub enum TransferType {
     Control = 0,
     Isochronous = 1,
@@ -104,15 +110,15 @@ pub enum Direction {
 }
 
 pub trait ControlEndpoint {
-    fn control_get_descriptor(&self, host: &mut dyn USBHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, TransferError>;
+    fn control_get_descriptor(&mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, TransferError>;
 
-    fn control_set(&self, host: &mut dyn USBHost, param: RequestCode, lo_val: u8, hi_val: u8, index: u16) -> Result<(), TransferError>;
+    fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, lo_val: u8, hi_val: u8, index: u16) -> Result<(), TransferError>;
 }
 
 pub trait BulkEndpoint {
-    fn bulk_in(&self, host: &mut dyn USBHost, buffer: &mut [u8]) -> Result<usize, TransferError>;
+    fn bulk_in(&self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, TransferError>;
 
-    fn bulk_out(&self, host: &mut dyn USBHost, buffer: &[u8]) -> Result<usize, TransferError>;
+    fn bulk_out(&self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, TransferError>;
 }
 
 
@@ -122,55 +128,101 @@ pub struct SingleEp {
     pub endpoint_address: u8,
     pub transfer_type: TransferType,
     pub max_packet_size: u16,
+    in_toggle: bool,
+    out_toggle: bool,
+}
+
+impl TryFrom<(Address, &EndpointDescriptor)> for SingleEp {
+    type Error = TransferError;
+
+    fn try_from(addr_ep_desc: (Address, &EndpointDescriptor)) -> Result<Self, Self::Error> {
+        Ok(SingleEp {
+            device_address: addr_ep_desc.0.into(),
+            endpoint_address: addr_ep_desc.1.b_endpoint_address,
+            transfer_type: TransferType::from_repr(addr_ep_desc.1.bm_attributes).ok_or(TransferError::InvalidDescriptor)?,
+            max_packet_size: addr_ep_desc.1.w_max_packet_size,
+            in_toggle: false,
+            out_toggle: false,
+        })
+    }
 }
 
 impl BulkEndpoint for SingleEp {
-     fn bulk_in(&self, host: &mut dyn USBHost, buffer: &mut [u8]) -> Result<usize, TransferError> {
+     fn bulk_in(&self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, TransferError> {
         todo!()
     }
 
-     fn bulk_out(&self, host: &mut dyn USBHost, buffer: &[u8]) -> Result<usize, TransferError> {
+     fn bulk_out(&self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, TransferError> {
         todo!()
     }
 }
 
-// impl Endpoint for SingleEp {
-//     fn device_address(&self) -> Address {
-//         self.device_address
-//     }
-//
-//     fn endpoint_address(&self) -> u8 {
-//         self.endpoint_address
-//     }
-//
-//     fn transfer_type(&self) -> TransferType {
-//         self.transfer_type
-//     }
-//
-//     fn max_packet_size(&self) -> u16 {
-//         self.max_packet_size
-//     }
-// }
+impl Endpoint for SingleEp {
+    fn device_address(&self) -> Address {
+        self.device_address
+    }
 
+    fn endpoint_address(&self) -> u8 {
+        self.endpoint_address
+    }
+
+    fn transfer_type(&self) -> TransferType {
+        self.transfer_type
+    }
+
+    fn max_packet_size(&self) -> u16 {
+        self.max_packet_size
+    }
+
+    fn in_toggle(&self) -> bool {
+        self.in_toggle
+    }
+
+    fn set_in_toggle(&mut self, toggle: bool) {
+        self.in_toggle = toggle
+    }
+
+    fn out_toggle(&self) -> bool {
+        self.out_toggle
+    }
+
+    fn set_out_toggle(&mut self, toggle: bool) {
+        self.out_toggle = toggle
+    }
+}
+
+/// Bit 7 is the direction, with OUT = 0 and IN = 1
+const ENDPOINT_DIRECTION_MASK: u8 = 0x80;
+
+/// Bits 3..0 are the endpoint number
+const ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 
 /// `Endpoint` defines the USB endpoint for various transfers.
 pub trait Endpoint {
-    /// Address of the device owning this endpoint. Must be between 0
-    /// and 127.
-    fn address(&self) -> u8;
+    /// Address of the device owning this endpoint
+    fn device_address(&self) -> Address;
 
-    /// Endpoint number, irrespective of direction. (e.g., for both
-    /// endpoint addresses, `0x81` and `0x01`, this function would
-    /// return `0x01`).
-    fn endpoint_num(&self) -> u8;
+    /// Endpoint address, unique for the interface (includes direction bit)
+    fn endpoint_address(&self) -> u8;
 
-    /// The type of transfer this endpoint uses.
+    /// Direction inferred from endpoint address
+    fn direction(&self) -> Direction {
+        match self.endpoint_address() & ENDPOINT_DIRECTION_MASK  {
+            0 => Direction::Out,
+            _ => Direction::In
+        }
+    }
+
+    /// Endpoint number, irrespective of direction
+    /// Two endpoints per interface can share the same number (one IN, one OUT)
+    fn endpoint_num(&self) -> u8 {
+        self.endpoint_address() & ENDPOINT_NUMBER_MASK
+    }
+
+    /// The type of transfer this endpoint uses
     fn transfer_type(&self) -> TransferType;
 
-    /// The direction of transfer this endpoint accepts.
-    fn direction(&self) -> Direction;
-
-    /// The maximum packet size for this endpoint.
+    /// The maximum packet size for this endpoint
     fn max_packet_size(&self) -> u16;
 
     /// The data toggle sequence bit for the next transfer from the
@@ -189,6 +241,43 @@ pub trait Endpoint {
     /// sequence bit for the next host to device transfer.
     fn set_out_toggle(&mut self, toggle: bool);
 }
+
+// /// `Endpoint` defines the USB endpoint for various transfers.
+// pub trait Endpoint {
+//     /// Address of the device owning this endpoint. Must be between 0
+//     /// and 127.
+//     fn address(&self) -> u8;
+//
+//     /// Endpoint number, irrespective of direction. (e.g., for both
+//     /// endpoint addresses, `0x81` and `0x01`, this function would
+//     /// return `0x01`).
+//     fn endpoint_num(&self) -> u8;
+//
+//     /// The type of transfer this endpoint uses.
+//     fn transfer_type(&self) -> TransferType;
+//
+//     /// The direction of transfer this endpoint accepts.
+//     fn direction(&self) -> Direction;
+//
+//     /// The maximum packet size for this endpoint.
+//     fn max_packet_size(&self) -> u16;
+//
+//     /// The data toggle sequence bit for the next transfer from the
+//     /// device to the host.
+//     fn in_toggle(&self) -> bool;
+//
+//     /// The `USBHost` will, when required, update the data toggle
+//     /// sequence bit for the next device to host transfer.
+//     fn set_in_toggle(&mut self, toggle: bool);
+//
+//     /// The data toggle sequence bit for the next transfer from the
+//     /// host to the device.
+//     fn out_toggle(&self) -> bool;
+//
+//     /// The `USBHost` will, when required, update the data toggle
+//     /// sequence bit for the next host to device transfer.
+//     fn set_out_toggle(&mut self, toggle: bool);
+// }
 
 /// Types of errors that can be returned from a `Driver`.
 #[derive(Copy, Clone, Debug)]
@@ -226,7 +315,7 @@ pub trait Driver: core::fmt::Debug {
     ///
     /// `usbhost` may be used for communication with the USB when
     /// required.
-    fn tick(&mut self, millis: u64, usbhost: &mut dyn USBHost) -> Result<(), DriverError>;
+    fn tick(&mut self, usbhost: &mut dyn UsbHost) -> Result<(), DriverError>;
 }
 
 pub(crate) fn to_slice_mut<T>(v: &mut T) -> &mut [u8] {
