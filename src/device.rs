@@ -1,14 +1,14 @@
 use core::convert::TryInto;
 
-// use crate::{ControlEndpoint, DeviceDescriptor, SingleEp};
-use crate::{ConfigurationDescriptor, DescriptorType, EndpointDescriptor, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, to_slice_mut, TransferError, TransferType, USBHost, WValue};
+use crate::{ConfigurationDescriptor, ControlEndpoint, DescriptorType, EndpointDescriptor, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, to_slice_mut, TransferError, TransferType, USBHost, WValue};
 use crate::address::{Address};
 use crate::Endpoint;
 
 #[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 enum DeviceState {
-    Init,
-    Settling(u64),
+    // Init,
+    // Settling(u64),
+    Addressed,
     GetConfig,
     SetConfig(u8),
     SetProtocol,
@@ -45,10 +45,10 @@ pub struct Device {
 // }
 
 impl Device {
-    pub fn new(max_bus_packet_size: u16) -> Self {
+    pub fn new(max_bus_packet_size: u16, addr: Address) -> Self {
         Self {
-            state: DeviceState::Init,
-            address: Address::from(0),
+            state: DeviceState::Addressed,
+            address: addr,
             max_packet_size: max_bus_packet_size,
         }
     }

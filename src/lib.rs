@@ -18,11 +18,13 @@ pub mod address;
 pub mod class;
 pub mod device;
 pub mod parser;
+pub mod stack;
 
 use core::mem;
 pub use descriptor::*;
 pub use setup::*;
 pub use address::*;
+pub use stack::*;
 
 /// Errors that can be generated when attempting to do a USB transfer.
 #[derive(Debug)]
@@ -35,8 +37,18 @@ pub enum TransferError {
     Permanent(&'static str),
 }
 
+#[derive(Debug)]
+#[derive(defmt::Format)]
+pub enum HostEvent {
+    Reset,
+    Ready(device::Device),
+    Tick,
+}
+
 /// Trait for host controller interface.
 pub trait USBHost {
+    fn max_host_packet_size(&self) -> u16;
+
     /// Issue a control transfer with an optional data stage to
     /// `ep`. The data stage direction is determined by the direction
     /// of `bm_request_type`.
@@ -91,6 +103,19 @@ pub enum Direction {
     In,
 }
 
+pub trait ControlEndpoint {
+    fn control_get_descriptor(&self, host: &mut dyn USBHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, TransferError>;
+
+    fn control_set(&self, host: &mut dyn USBHost, param: RequestCode, lo_val: u8, hi_val: u8, index: u16) -> Result<(), TransferError>;
+}
+
+pub trait BulkEndpoint {
+    fn bulk_in(&self, host: &mut dyn USBHost, buffer: &mut [u8]) -> Result<usize, TransferError>;
+
+    fn bulk_out(&self, host: &mut dyn USBHost, buffer: &[u8]) -> Result<usize, TransferError>;
+}
+
+
 #[derive(defmt::Format)]
 pub struct SingleEp {
     pub device_address: Address,
@@ -98,6 +123,35 @@ pub struct SingleEp {
     pub transfer_type: TransferType,
     pub max_packet_size: u16,
 }
+
+impl BulkEndpoint for SingleEp {
+     fn bulk_in(&self, host: &mut dyn USBHost, buffer: &mut [u8]) -> Result<usize, TransferError> {
+        todo!()
+    }
+
+     fn bulk_out(&self, host: &mut dyn USBHost, buffer: &[u8]) -> Result<usize, TransferError> {
+        todo!()
+    }
+}
+
+// impl Endpoint for SingleEp {
+//     fn device_address(&self) -> Address {
+//         self.device_address
+//     }
+//
+//     fn endpoint_address(&self) -> u8 {
+//         self.endpoint_address
+//     }
+//
+//     fn transfer_type(&self) -> TransferType {
+//         self.transfer_type
+//     }
+//
+//     fn max_packet_size(&self) -> u16 {
+//         self.max_packet_size
+//     }
+// }
+
 
 /// `Endpoint` defines the USB endpoint for various transfers.
 pub trait Endpoint {
@@ -138,6 +192,7 @@ pub trait Endpoint {
 
 /// Types of errors that can be returned from a `Driver`.
 #[derive(Copy, Clone, Debug)]
+#[derive(defmt::Format)]
 pub enum DriverError {
     /// An error that may be retried.
     Retry(u8, &'static str),
