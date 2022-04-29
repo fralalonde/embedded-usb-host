@@ -1,10 +1,11 @@
 use core::convert::TryInto;
+use core::mem;
 
-use crate::{ConfigurationDescriptor, ControlEndpoint, DescriptorType, DeviceDescriptor, EndpointDescriptor, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, SingleEp, to_slice_mut, TransferError, TransferType, UsbHost, WValue};
+use crate::{ConfigurationDescriptor, ControlEndpoint, DescriptorType, DeviceDescriptor, Endpoint, EndpointDescriptor, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, SingleEp, TransferError, TransferType, UsbHost, WValue};
 use crate::address::{Address};
-use crate::Endpoint;
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(defmt::Format)]
 enum DeviceState {
     // Init,
     // Settling(u64),
@@ -17,71 +18,66 @@ enum DeviceState {
     Running,
 }
 
-#[derive(Debug, defmt::Format)]
+#[derive(Clone, Debug, PartialEq)]
+#[derive(defmt::Format)]
 pub struct Device {
     state: DeviceState,
-    address: Address,
-    max_packet_size: u16,
-    in_toggle: bool,
-    out_toggle: bool,
+    control_ep: SingleEp,
 }
 
 
-/// Control endpoint for device
-impl Endpoint for Device {
-    fn device_address(&self) -> Address {
-        self.address
-    }
-
-    fn endpoint_address(&self) -> u8 {
-        0
-    }
-
-    fn transfer_type(&self) -> TransferType {
-        TransferType::Control
-    }
-
-    fn max_packet_size(&self) -> u16 {
-        self.max_packet_size
-    }
-
-    fn in_toggle(&self) -> bool {
-        self.in_toggle
-    }
-
-    fn set_in_toggle(&mut self, toggle: bool) {
-        self.in_toggle = toggle
-    }
-
-    fn out_toggle(&self) -> bool {
-        self.out_toggle
-    }
-
-    fn set_out_toggle(&mut self, toggle: bool) {
-        self.out_toggle = toggle
-    }
-}
+// /// Control endpoint.rs for device
+// impl Endpoint for Device {
+//     fn device_address(&self) -> Address {
+//         self.address
+//     }
+//
+//     fn endpoint_address(&self) -> u8 {
+//         0
+//     }
+//
+//     fn transfer_type(&self) -> TransferType {
+//         TransferType::Control
+//     }
+//
+//     fn max_packet_size(&self) -> u16 {
+//         self.max_packet_size
+//     }
+//
+//     fn in_toggle(&self) -> bool {
+//         self.in_toggle
+//     }
+//
+//     fn set_in_toggle(&mut self, toggle: bool) {
+//         self.in_toggle = toggle
+//     }
+//
+//     fn out_toggle(&self) -> bool {
+//         self.out_toggle
+//     }
+//
+//     fn set_out_toggle(&mut self, toggle: bool) {
+//         self.out_toggle = toggle
+//     }
+// }
 
 impl Device {
     pub fn new(max_bus_packet_size: u16, addr: Address) -> Self {
         Self {
             state: DeviceState::Addressed,
-            address: addr,
-            max_packet_size: max_bus_packet_size,
-            in_toggle: false,
-            out_toggle: false,
+            control_ep: SingleEp::control(addr, max_bus_packet_size)
         }
     }
 
     pub fn endpoint(&self, desc: &EndpointDescriptor) -> Result<SingleEp, TransferError> {
-        (self.address, desc).try_into()
+        (&self.control_ep.device_address(), desc).try_into()
     }
 
     pub fn get_device_descriptor(&mut self, host: &mut dyn UsbHost) -> Result<DeviceDescriptor, TransferError> {
         let mut dev_desc: DeviceDescriptor = DeviceDescriptor::default();
         self.control_get_descriptor(host, DescriptorType::Device, 0, to_slice_mut(&mut dev_desc))?;
-        if dev_desc.b_max_packet_size < self.max_packet_size as u8 {
-            self.max_packet_size = dev_desc.b_max_packet_size as u16;
+        if dev_desc.b_max_packet_size < self.control_ep.max_packet_size as u8 {
+            self.control_ep.max_packet_size = dev_desc.b_max_packet_size as u16;
         }
         Ok(dev_desc)
     }
@@ -97,13 +93,13 @@ impl Device {
     }
 
     pub fn get_address(&self) -> Address {
-        self.address
+        self.control_ep.device_address()
     }
 
     pub fn set_address(&mut self, host: &mut dyn UsbHost, dev_addr: Address) -> Result<(), TransferError> {
-        if 0u8 == self.address.into() {
+        if 0u8 == self.control_ep.device_address.into() {
             self.control_set(host, RequestCode::SetAddress, dev_addr.into(), 0, 0)?;
-            self.address = dev_addr;
+            self.control_ep.device_address = dev_addr;
             Ok(())
         } else {
             Err(TransferError::Permanent("Device Address Already Set"))
@@ -128,7 +124,7 @@ impl ControlEndpoint for Device {
     /// Retrieve descriptor(s)
     fn control_get_descriptor(&mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, desc_index: u8, buffer: &mut [u8]) -> Result<usize, TransferError> {
         Ok(host.control_transfer(
-            self,
+            &mut self.control_ep,
             RequestType::from((RequestDirection::DeviceToHost, RequestKind::Standard, RequestRecipient::Device)),
             RequestCode::GetDescriptor,
             WValue::from((desc_index, desc_type as u8)),
@@ -140,7 +136,7 @@ impl ControlEndpoint for Device {
     /// Generic control write
     fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, lo_val: u8, hi_val: u8, index: u16) -> Result<(), TransferError> {
         host.control_transfer(
-            self,
+            &mut self.control_ep,
             RequestType::from((RequestDirection::HostToDevice, RequestKind::Standard, RequestRecipient::Device)),
             param,
             WValue::from((lo_val, hi_val)),
@@ -151,4 +147,7 @@ impl ControlEndpoint for Device {
     }
 }
 
-
+fn to_slice_mut<T>(v: &mut T) -> &mut [u8] {
+    let ptr = v as *mut T as *mut u8;
+    unsafe { core::slice::from_raw_parts_mut(ptr, mem::size_of::<T>()) }
+}
