@@ -1,5 +1,5 @@
 use crate::device::Device;
-use crate::{AddressPool, DeviceDescriptor, Endpoint, RequestCode, RequestType, TransferError, WValue};
+use crate::{AddressPool, DeviceDescriptor, Endpoint, RequestCode, RequestType, UsbError, WValue};
 
 #[derive(Debug)]
 #[derive(defmt::Format)]
@@ -29,7 +29,7 @@ pub trait UsbHost {
         w_value: WValue,
         w_index: u16,
         buf: Option<&mut [u8]>,
-    ) -> Result<usize, TransferError>;
+    ) -> Result<usize, UsbError>;
 
     /// Issue a transfer from `ep` to the host.
     ///
@@ -39,11 +39,11 @@ pub trait UsbHost {
         &mut self,
         ep: &mut dyn Endpoint,
         buf: &mut [u8],
-    ) -> Result<usize, TransferError>;
+    ) -> Result<usize, UsbError>;
 
     /// Issue a transfer from the host to `ep`.
     ///
     /// On success, the amount of data transferred from `buf` is
     /// returned. This should always be equal to `buf.len()`.
-    fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8]) -> Result<usize, TransferError>;
+    fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8]) -> Result<usize, UsbError>;
 }

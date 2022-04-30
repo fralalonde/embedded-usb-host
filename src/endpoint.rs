@@ -1,15 +1,15 @@
-use crate::{Address, DescriptorType, Direction, EndpointDescriptor, RequestCode, TransferError, TransferType, UsbHost};
+use crate::{Address, DescriptorType, Direction, EndpointDescriptor, RequestCode, UsbError, TransferType, UsbHost, Audio1EndpointDescriptor};
 
 pub trait ControlEndpoint {
-    fn control_get_descriptor(&mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, TransferError>;
+    fn control_get_descriptor(&mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, UsbError>;
 
-    fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, lo_val: u8, hi_val: u8, index: u16) -> Result<(), TransferError>;
+    fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, lo_val: u8, hi_val: u8, index: u16) -> Result<(), UsbError>;
 }
 
 pub trait BulkEndpoint {
-    fn bulk_in(&self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, TransferError>;
+    fn bulk_in(&self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError>;
 
-    fn bulk_out(&self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, TransferError>;
+    fn bulk_out(&self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError>;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -37,14 +37,29 @@ impl SingleEp {
 }
 
 impl TryFrom<(&Address, &EndpointDescriptor)> for SingleEp {
-    type Error = TransferError;
+    type Error = UsbError;
 
     fn try_from(addr_ep_desc: (&Address, &EndpointDescriptor)) -> Result<Self, Self::Error> {
         Ok(SingleEp {
             device_address: (*addr_ep_desc.0).into(),
             endpoint_address: addr_ep_desc.1.b_endpoint_address,
-            transfer_type: TransferType::from_repr(addr_ep_desc.1.bm_attributes).ok_or(TransferError::InvalidDescriptor)?,
-            max_packet_size: addr_ep_desc.1.w_max_packet_size,
+            transfer_type: TransferType::from_repr(addr_ep_desc.1.bm_attributes).ok_or(UsbError::InvalidDescriptor)?,
+            max_packet_size: addr_ep_desc.1.w_max_packet_size_lo as u16,
+            in_toggle: false,
+            out_toggle: false,
+        })
+    }
+}
+
+impl TryFrom<(&Address, &Audio1EndpointDescriptor)> for SingleEp {
+    type Error = UsbError;
+
+    fn try_from(addr_ep_desc: (&Address, &Audio1EndpointDescriptor)) -> Result<Self, Self::Error> {
+        Ok(SingleEp {
+            device_address: (*addr_ep_desc.0).into(),
+            endpoint_address: addr_ep_desc.1.b_endpoint_address,
+            transfer_type: TransferType::from_repr(addr_ep_desc.1.bm_attributes).ok_or(UsbError::InvalidDescriptor)?,
+            max_packet_size: addr_ep_desc.1.w_max_packet_size_lo as u16,
             in_toggle: false,
             out_toggle: false,
         })
@@ -52,11 +67,11 @@ impl TryFrom<(&Address, &EndpointDescriptor)> for SingleEp {
 }
 
 impl BulkEndpoint for SingleEp {
-    fn bulk_in(&self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, TransferError> {
+    fn bulk_in(&self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError> {
         todo!()
     }
 
-    fn bulk_out(&self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, TransferError> {
+    fn bulk_out(&self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError> {
         todo!()
     }
 }

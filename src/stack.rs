@@ -1,6 +1,7 @@
 use heapless::Vec;
-use crate::{Address, AddressPool, DescriptorType, DeviceDescriptor, Direction, Driver, Endpoint, HostEvent, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, TransferError, TransferType, UsbHost, WValue};
+use crate::{Address, AddressPool, ConfigurationDescriptor, DescriptorType, DeviceDescriptor, Direction, Driver, Endpoint, HostEvent, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, UsbError, TransferType, UsbHost, WValue};
 use crate::device::Device;
+use crate::parser::DescriptorParser;
 
 pub struct UsbStack<H> {
     host: H,
@@ -28,7 +29,7 @@ impl<H: UsbHost> UsbStack<H> {
                 }
                 HostEvent::Reset => {
                     debug!("USB Host Reset");
-                    // TODO clear pool, call drivers for unregister
+                    // TODO clear pool, call drivers to unregister
                     self.addr_pool.reset();
                     self.devices.clear();
                 }
@@ -43,30 +44,35 @@ impl<H: UsbHost> UsbStack<H> {
 
     pub fn configure_dev(&mut self, mut device: Device, desc: DeviceDescriptor) {
         debug!("USB New Device Descriptor {:?}", desc);
-        self.devices.push(device.clone());
 
-        // if self.drivers.want_device(&dev_desc) {
-        //
-        // }
-        // TODO register device, call drivers for match
+        let mut buf = [0u8; 256];
+        match device.get_configuration_descriptors(&mut self.host, 0, &mut buf) {
+            Ok(size) => {
+                let mut conf = DescriptorParser::new(&buf[0..size]);
+                match self.drivers.register(&mut self.host, &mut device, &desc, &mut conf) {
+                    Ok(true) => info!("USB Driver registered device"),
+                    Ok(false) => debug!("USB Driver rejected device"),
+                    Err(e) => warn!("USB Driver Error {:?}", e)
+                }
+            }
+            Err(e) => warn!("USB Device Config Descriptor Failed")
+        }
+
+        self.devices.push(device);
     }
-    
 }
 
 pub fn address_dev(
     host: &mut dyn UsbHost,
     addr_pool: &mut AddressPool,
-) -> Result<(Device, DeviceDescriptor), TransferError> {
-
-
-    let addr = addr_pool.take_next().ok_or(TransferError::Permanent("Out of USB addr"))?;
+) -> Result<(Device, DeviceDescriptor), UsbError> {
+    let addr = addr_pool.take_next().ok_or(UsbError::Permanent("Out of USB addr"))?;
     // TODO determine correct packet size to use from descriptor
     let mut dev = Device::new(host.max_host_packet_size(), Address::from(0));
     let short_desc = dev.get_device_descriptor(host)?;
 
     dev.set_address(host, addr)?;
     debug!("USB Device Address Set to: {:?}", addr);
-    let full_desc = dev.get_device_descriptor(host)?;
 
-    Ok((dev, full_desc))
+    Ok((dev, short_desc))
 }

@@ -1,6 +1,7 @@
+use core::mem;
 use utf16string::{LE, WStr};
 
-use crate::{Class, DeviceDescriptor, InterfaceAssociationDescriptor};
+use crate::{Audio1EndpointDescriptor, Class, DeviceDescriptor, InterfaceAssociationDescriptor};
 use crate::class::audio;
 use crate::class::audio::AudioDescriptorRef;
 use crate::descriptor::{ConfigurationDescriptor, DescriptorType, EndpointDescriptor, InterfaceDescriptor};
@@ -12,6 +13,7 @@ pub enum DescriptorRef<'a> {
     String(&'a WStr<LE>),
     Interface(&'a InterfaceDescriptor),
     Endpoint(&'a EndpointDescriptor),
+    Audio1Endpoint(&'a Audio1EndpointDescriptor),
 
     InterfaceAssociation(&'a InterfaceAssociationDescriptor),
 
@@ -68,7 +70,16 @@ impl<'a> Iterator for DescriptorParser<'a> {
                 }
                 Some(DescriptorRef::Interface(ifdesc))
             }
-            Some(DescriptorType::Endpoint) => Some(DescriptorRef::Endpoint(unsafe { &*(desc_offset as *const _) })),
+            Some(DescriptorType::Endpoint) => {
+                match desc_len {
+                    7 => Some(DescriptorRef::Endpoint(unsafe { &*(desc_offset as *const _) })),
+                    9 => Some(DescriptorRef::Audio1Endpoint(unsafe { &*(desc_offset as *const _) })),
+                    _ => {
+                        warn!("Invalid endpoint descriptor of size {}", desc_len);
+                        None
+                    }
+                }
+            }
             Some(DescriptorType::InterfaceAssociation) => Some(DescriptorRef::InterfaceAssociation(unsafe { &*(desc_offset as *const _) })),
 
             Some(DescriptorType::ClassInterface) if self.class == Some(Class::Audio) => Some(DescriptorRef::Audio(audio::parse(self.subclass, DescriptorType::ClassInterface, &self.buf[self.pos..desc_next]))),

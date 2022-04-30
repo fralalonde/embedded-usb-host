@@ -197,8 +197,28 @@ pub struct EndpointDescriptor {
     pub b_descriptor_type: DescriptorType,
     pub b_endpoint_address: u8,
     pub bm_attributes: u8,
-    pub w_max_packet_size: u16,
+    // FIXME unaligned u16 causes issues, replaced with lo/hi u8 pair
+    // pub w_max_packet_size: u16,
+    pub w_max_packet_size_lo: u8,
+    pub w_max_packet_size_hi: u8,
     pub b_interval: u8,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(defmt::Format)]
+#[repr(C)]
+pub struct Audio1EndpointDescriptor {
+    pub b_length: u8,
+    pub b_descriptor_type: DescriptorType,
+    pub b_endpoint_address: u8,
+    pub bm_attributes: u8,
+    // FIXME unaligned u16 causes issues, replaced with lo/hi u8 pair
+    // pub w_max_packet_size: u16,
+    pub w_max_packet_size_lo: u8,
+    pub w_max_packet_size_hi: u8,
+    pub b_interval: u8,
+    pub shit1: u8,
+    pub shit2: u8,
 }
 
 #[cfg(test)]

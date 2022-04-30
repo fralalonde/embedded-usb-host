@@ -35,15 +35,15 @@ pub use driver::*;
 /// Errors that can be generated when attempting to do a USB transfer.
 #[derive(Debug)]
 #[derive(defmt::Format)]
-pub enum TransferError {
+pub enum UsbError {
     /// An error that may be retried.
-    Retry(&'static str),
+    Transient(&'static str),
 
     /// A permanent error.
     Permanent(&'static str),
 
     InvalidDescriptor,
-    EnumerationFailed,
+    Driver,
 }
 
 /// The type of transfer to use when talking to USB devices.
