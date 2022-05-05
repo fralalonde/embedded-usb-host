@@ -12,6 +12,9 @@
 #[macro_use]
 extern crate defmt;
 
+#[macro_use]
+extern crate hash32_derive;
+
 pub mod descriptor;
 pub mod setup;
 pub mod address;
@@ -23,14 +26,24 @@ pub mod endpoint;
 pub mod host;
 pub mod driver;
 
-use core::mem;
+#[cfg(feature = "atsamd")]
+pub mod atsamd;
+
+use hash32::Hasher;
+use heapless::FnvIndexMap;
 pub use descriptor::*;
+pub use device::*;
+pub use parser::*;
 pub use setup::*;
 pub use address::*;
 pub use stack::*;
 pub use endpoint::*;
 pub use host::*;
 pub use driver::*;
+pub use class::*;
+
+#[cfg(feature = "atsamd")]
+pub use atsamd::*;
 
 /// Errors that can be generated when attempting to do a USB transfer.
 #[derive(Debug)]
@@ -44,12 +57,14 @@ pub enum UsbError {
 
     InvalidDescriptor,
     Driver,
+    TooManyDevices,
+    TooManyEndpoints,
 }
 
 /// The type of transfer to use when talking to USB devices.
 ///
 /// cf §9.6.6 of USB 2.0
-#[derive(Copy, Clone, Debug, PartialEq, strum_macros::FromRepr)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, strum_macros::FromRepr)]
 #[derive(defmt::Format)]
 #[repr(u8)]
 pub enum TransferType {
@@ -57,6 +72,12 @@ pub enum TransferType {
     Isochronous = 1,
     Bulk = 2,
     Interrupt = 3,
+}
+
+impl hash32::Hash for TransferType {
+    fn hash<H>(&self, state: &mut H) where H: Hasher {
+        state.write(&[*self as u8])
+    }
 }
 
 /// The direction of the transfer with the USB device.
@@ -68,6 +89,9 @@ pub enum Direction {
     In,
 }
 
-
-
-
+fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(map: &mut FnvIndexMap<K, V, N>, key: K, new: F) -> Option<&mut V> {
+    if !map.contains_key(&key) {
+        let _ = map.insert(key, new());
+    }
+    map.get_mut(&key)
+}

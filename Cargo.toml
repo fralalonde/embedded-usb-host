@@ -1,8 +1,8 @@
 [package]
-name = "usb-host"
+name = "embedded-usb-host"
 description = "Traits for USB host driver development."
 version = "0.1.2"
-authors = ["Brian Cully <bjc@kublai.com>"]
+authors = ["Brian Cully <bjc@kublai.com>", "Francis Lalonde <fralalonde@gmail.com>"]
 edition = "2021"
 license = "LGPL-3.0-or-later"
 categories = ["no-std", "embedded", "hardware-support"]
@@ -11,10 +11,48 @@ readme = "README.md"
 repository = "https://github.com/fralalonde/usb-host.git"
 
 [dependencies]
-utf16string = { path = "../utf16string", default-features = false, features = ["defmt"] }
-defmt = "0.3"
-hash32 = "0.2"
 heapless = "0.7"
+embedded-hal = "0.2"
+#slotmap = { version = "1.0", default-features = false }
 
 strum = { version = "0.23", default-features = false }
 strum_macros = "0.23"
+
+atsamd-hal = { version = "0.14", optional = true }
+
+hash32 = "0.2"
+hash32-derive = "0.1"
+
+# TODO make defmt & hash32 optional
+defmt = "0.3"
+
+
+# TODO make USB descriptor string handling optional
+utf16string = { path = "../utf16string", default-features = false, features = ["defmt"] }
+
+# TODO MIDI driver required crates, make optional
+#spin = "0.9"
+spin = { path = "../spin-rs", features = ["portable_atomic"] }
+#embedded-midi = { git = "https://github.com/fralalonde/embedded-midi.git", branch = "main" }
+embedded-midi = { path = "../embedded-midi" }
+
+[features]
+# TODO make these crates optional
+defmt = []
+
+atsamd = []
+samd11c = ["atsamd", "atsamd-hal/samd11c"]
+samd21e = ["atsamd", "atsamd-hal/samd21e"]
+samd21g = ["atsamd", "atsamd-hal/samd21g"]
+samd21j = ["atsamd", "atsamd-hal/samd21j"]
+samd51g = ["atsamd", "atsamd-hal/samd51g"]
+samd51j = ["atsamd", "atsamd-hal/samd51j"]
+samd51n = ["atsamd", "atsamd-hal/samd51n"]
+samd51p = ["atsamd", "atsamd-hal/samd51p"]
+same51g = ["atsamd", "atsamd-hal/same51g"]
+same51j = ["atsamd", "atsamd-hal/same51j"]
+same51n = ["atsamd", "atsamd-hal/same51n"]
+same53j = ["atsamd", "atsamd-hal/same53j"]
+same53n = ["atsamd", "atsamd-hal/same53n"]
+same54n = ["atsamd", "atsamd-hal/same54n"]
+same54p = ["atsamd", "atsamd-hal/same54p"]

@@ -1,7 +1,6 @@
-use core::mem;
 use utf16string::{LE, WStr};
 
-use crate::{Audio1EndpointDescriptor, Class, DeviceDescriptor, InterfaceAssociationDescriptor};
+use crate::{Audio1EndpointDescriptor, DeviceClass, DeviceDescriptor, DeviceSubclass, InterfaceAssociationDescriptor};
 use crate::class::audio;
 use crate::class::audio::AudioDescriptorRef;
 use crate::descriptor::{ConfigurationDescriptor, DescriptorType, EndpointDescriptor, InterfaceDescriptor};
@@ -28,8 +27,8 @@ pub enum DescriptorRef<'a> {
 pub struct DescriptorParser<'a> {
     buf: &'a [u8],
     pos: usize,
-    class: Option<Class>,
-    subclass: Option<u8>,
+    class: Option<DeviceClass>,
+    subclass: Option<DeviceSubclass>,
 }
 
 impl<'a> Iterator for DescriptorParser<'a> {
@@ -65,7 +64,7 @@ impl<'a> Iterator for DescriptorParser<'a> {
             Some(DescriptorType::Interface) => {
                 let ifdesc: &InterfaceDescriptor = unsafe { &*(desc_offset as *const _) };
                 if ifdesc.b_interface_class != 0 && ifdesc.b_interface_sub_class != 0 {
-                    self.class = Class::from_repr(ifdesc.b_interface_class);
+                    self.class = DeviceClass::from_repr(ifdesc.b_interface_class);
                     self.subclass = Some(ifdesc.b_interface_sub_class);
                 }
                 Some(DescriptorRef::Interface(ifdesc))
@@ -82,8 +81,8 @@ impl<'a> Iterator for DescriptorParser<'a> {
             }
             Some(DescriptorType::InterfaceAssociation) => Some(DescriptorRef::InterfaceAssociation(unsafe { &*(desc_offset as *const _) })),
 
-            Some(DescriptorType::ClassInterface) if self.class == Some(Class::Audio) => Some(DescriptorRef::Audio(audio::parse(self.subclass, DescriptorType::ClassInterface, &self.buf[self.pos..desc_next]))),
-            Some(DescriptorType::ClassEndpoint) if self.class == Some(Class::Audio) => Some(DescriptorRef::Audio(audio::parse(self.subclass, DescriptorType::ClassEndpoint, &self.buf[self.pos..desc_next]))),
+            Some(DescriptorType::ClassInterface) if self.class == Some(DeviceClass::Audio) => Some(DescriptorRef::Audio(audio::parse(self.subclass, DescriptorType::ClassInterface, &self.buf[self.pos..desc_next]))),
+            Some(DescriptorType::ClassEndpoint) if self.class == Some(DeviceClass::Audio) => Some(DescriptorRef::Audio(audio::parse(self.subclass, DescriptorType::ClassEndpoint, &self.buf[self.pos..desc_next]))),
 
             Some(DescriptorType::ClassInterface) => Some(DescriptorRef::UnknownClassInterface(&self.buf[self.pos..desc_next])),
             Some(DescriptorType::ClassEndpoint) => Some(DescriptorRef::UnknownClassEndpoint(&self.buf[self.pos..desc_next])),

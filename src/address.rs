@@ -1,29 +1,23 @@
-use hash32::Hasher;
-
 const MAX_DEVICES: u8 = 127;
 
-#[derive(Clone, Copy, Debug, defmt::Format, Eq, PartialEq)]
-pub struct Address(u8);
-
-impl hash32::Hash for Address {
-    fn hash<H>(&self, state: &mut H) where H: Hasher {
-        state.write(&[self.0])
-    }
-}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(defmt::Format)]
+#[derive(Hash32)]
+pub struct DevAddress(u8);
 
 pub struct AddressPool {
     pool_bits: u128,
 }
 
-impl From<u8> for Address {
+impl From<u8> for DevAddress {
     fn from(addr: u8) -> Self {
         if addr > MAX_DEVICES { panic!("USB addr out of range") }
-        Address(addr)
+        DevAddress(addr)
     }
 }
 
-impl From<Address> for u8 {
-    fn from(addr: Address) -> Self {
+impl From<DevAddress> for u8 {
+    fn from(addr: DevAddress) -> Self {
         addr.0
     }
 }
@@ -41,16 +35,16 @@ impl AddressPool {
         self.pool_bits = FULL_POOL
     }
 
-    pub fn take_next(&mut self) -> Option<Address> {
+    pub fn take_next(&mut self) -> Option<DevAddress> {
         let next = self.pool_bits.leading_zeros() as u8;
         if next <= MAX_DEVICES {
             self.pool_bits &= !(1 << (128 - (next + 1)));
-            return Some(Address::from(next));
+            return Some(DevAddress::from(next));
         }
         None
     }
 
-    pub fn put_back(&mut self, addr: Address) {
+    pub fn put_back(&mut self, addr: DevAddress) {
         let addr: u8 = addr.into();
         if addr <= MAX_DEVICES {
             self.pool_bits |= 1 << addr

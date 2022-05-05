@@ -1,5 +1,5 @@
 use heapless::Vec;
-use crate::{Address, AddressPool, ConfigurationDescriptor, DescriptorType, DeviceDescriptor, Direction, Driver, Endpoint, HostEvent, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, UsbError, TransferType, UsbHost, WValue};
+use crate::{AddressPool, DeviceDescriptor, Driver, HostEvent, UsbError, UsbHost};
 use crate::device::Device;
 use crate::parser::DescriptorParser;
 
@@ -23,7 +23,7 @@ impl<H: UsbHost> UsbStack<H> {
     pub fn handle_irq(&mut self) {
         if let Some(host_event) = self.host.update(&mut self.addr_pool) {
             match host_event {
-                HostEvent::Ready(mut device, desc) => {
+                HostEvent::Ready(device, desc) => {
                     debug!("USB Host Ready {:?}", device);
                     self.configure_dev(device, desc)
                 }
@@ -34,7 +34,9 @@ impl<H: UsbHost> UsbStack<H> {
                     self.devices.clear();
                 }
                 HostEvent::Tick => {
-                    self.drivers.tick(&mut self.host);
+                    if let Err(err) = self.drivers.tick(&mut self.host) {
+                        warn!("USB Driver error: {}", err)
+                    }
                 }
             }
         }
@@ -55,10 +57,12 @@ impl<H: UsbHost> UsbStack<H> {
                     Err(e) => warn!("USB Driver Error {:?}", e)
                 }
             }
-            Err(e) => warn!("USB Device Config Descriptor Failed")
+            Err(e) => warn!("USB Device Config Descriptor Failed: {:?}", e)
         }
 
-        self.devices.push(device);
+        if let Err(err) = self.devices.push(device) {
+            warn!("USB Device configuration error: {}", err)
+        }
     }
 }
 
@@ -68,7 +72,7 @@ pub fn address_dev(
 ) -> Result<(Device, DeviceDescriptor), UsbError> {
     let addr = addr_pool.take_next().ok_or(UsbError::Permanent("Out of USB addr"))?;
     // TODO determine correct packet size to use from descriptor
-    let mut dev = Device::new(host.max_host_packet_size(), Address::from(0));
+    let mut dev = Device::new(host.max_host_packet_size());
     let short_desc = dev.get_device_descriptor(host)?;
 
     dev.set_address(host, addr)?;

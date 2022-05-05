@@ -64,7 +64,7 @@ impl TryFrom<u8> for DescriptorType {
 #[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
 #[derive(defmt::Format)]
 #[repr(u8)]
-pub enum Class {
+pub enum DeviceClass {
     FromInterface = 0x0,
     Audio = 0x01,
     Cdc = 0x02,
@@ -89,6 +89,8 @@ pub enum Class {
     ApplicationSpecific = 0xFE,
     VendorSpecific = 0xFF,
 }
+
+pub type DeviceSubclass = u8;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[derive(defmt::Format)]

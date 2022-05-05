@@ -277,6 +277,11 @@ pub struct MSOutJackDescriptor {
     pub i_jack: u8,
 }
 
+pub enum JackType {
+    Embedded = 1,
+    External = 2
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
 #[repr(u8)]
 pub enum MSEndpointSubtype {
