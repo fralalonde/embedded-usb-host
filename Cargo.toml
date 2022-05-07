@@ -13,7 +13,6 @@ repository = "https://github.com/fralalonde/usb-host.git"
 [dependencies]
 heapless = "0.7"
 embedded-hal = "0.2"
-#slotmap = { version = "1.0", default-features = false }
 
 strum = { version = "0.23", default-features = false }
 strum_macros = "0.23"
@@ -34,7 +33,7 @@ utf16string = { path = "../utf16string", default-features = false, features = ["
 #spin = "0.9"
 spin = { path = "../spin-rs", features = ["portable_atomic"] }
 #embedded-midi = { git = "https://github.com/fralalonde/embedded-midi.git", branch = "main" }
-embedded-midi = { path = "../embedded-midi" }
+embedded-midi = { path = "../embedded-midi", features = ["defmt"] }
 
 [features]
 # TODO make these crates optional

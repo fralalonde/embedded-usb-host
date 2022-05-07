@@ -49,7 +49,7 @@ pub struct HostController {
     _dp_pad: gpio::Pa25<gpio::PfG>,
     _sof_pad: Option<gpio::Pa23<gpio::PfG>>,
     host_enable_pin: Option<gpio::Pa28<Output<OpenDrain>>>,
-    millis: fn() -> u64,
+    after_millis: fn(u64) -> u64,
 }
 
 pub struct HostPins {
@@ -82,7 +82,7 @@ impl HostController {
         port: &mut gpio::Port,
         clocks: &mut GenericClockController,
         power: &mut PM,
-        millis: fn() -> u64,
+        after_millis: fn(u64) -> u64,
     ) -> Self {
         power.apbbmask.modify(|_, w| w.usb_().set_bit());
 
@@ -99,7 +99,7 @@ impl HostController {
             _dp_pad: pins.dp_pin.into_function_g(port),
             _sof_pad: pins.sof_pin.map(|p| p.into_function_g(port)),
             host_enable_pin: pins.host_enable_pin.map(|p| p.into_open_drain_output(port)),
-            millis,
+            after_millis,
         }
     }
 
@@ -218,9 +218,9 @@ impl UsbHost for HostController {
                 // Seems unneccesary, since SOFE will be set immediately after reset according to §32.6.3.3.
                 self.usb.host().ctrlb.modify(|_, w| w.sofe().set_bit());
                 // USB spec requires 20ms of SOF after bus reset.
-                self.state = HostState::WaitSOF((self.millis)() + 20);
+                self.state = HostState::WaitSOF((self.after_millis)(20));
             }
-            (Some(HostIrq::HostStartOfFrame), HostState::WaitSOF(until)) if (self.millis)() >= until => {
+            (Some(HostIrq::HostStartOfFrame), HostState::WaitSOF(until)) if self.now() >= until => {
                 self.state = HostState::Ready;
                 match stack::address_dev(self, addr_pool) {
                     Ok((device, desc)) => {
@@ -247,7 +247,7 @@ impl UsbHost for HostController {
         }
 
         if prev_state != self.state {
-            debug!("USB new task state {:?}", self.state)
+            trace!("USB new task state {:?}", self.state)
         }
         host_event
     }
@@ -256,23 +256,23 @@ impl UsbHost for HostController {
                         b_request: RequestCode, w_value: WValue, w_index: u16, buf: Option<&mut [u8]>,
     ) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.control_transfer(ep, bm_request_type, b_request, w_value, w_index, buf, self.millis)?;
+        let len = pipe.control_transfer(ep, bm_request_type, b_request, w_value, w_index, buf, self.after_millis)?;
         Ok(len)
     }
 
     fn in_transfer(&mut self, ep: &mut dyn Endpoint, buf: &mut [u8]) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.in_transfer(ep, buf, NAK_LIMIT, self.millis)?;
+        let len = pipe.in_transfer(ep, buf, NAK_LIMIT, self.after_millis)?;
         Ok(len)
     }
 
     fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8]) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.out_transfer(ep, buf, NAK_LIMIT, self.millis)?;
+        let len = pipe.out_transfer(ep, buf, NAK_LIMIT, self.after_millis)?;
         Ok(len)
     }
 
-    fn now_ms(&self) -> u64 {
-        (self.millis)()
+    fn after_millis(&self, ms: u64) -> u64 {
+        (self.after_millis)(ms)
     }
 }

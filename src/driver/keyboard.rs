@@ -1,12 +1,11 @@
 //! Simple USB host-side driver for boot protocol keyboards.
 
-#![no_std]
-
 use crate::{ConfigurationDescriptor, DescriptorType, DeviceDescriptor, Direction, Driver, UsbError, Endpoint, EndpointDescriptor, InterfaceDescriptor, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, TransferType, UsbHost, WValue, DescriptorParser};
 
 use core::convert::TryFrom;
 use core::mem::{self, MaybeUninit};
 use core::ptr;
+use heapless::Vec;
 
 // How long to wait before talking to the device again after setting
 // its address. cf §9.2.6.3 of USB 2.0
@@ -23,7 +22,7 @@ const CONFIG_BUFFER_LEN: usize = 256;
 
 /// Boot protocol keyboard driver for USB hosts.
 pub struct BootKeyboard<F> {
-    devices: [Option<Device>; MAX_DEVICES],
+    devices: Vec<Option<Device>, MAX_DEVICES>,
     callback: F,
 }
 
@@ -37,23 +36,9 @@ impl<F> BootKeyboard<F>
     where
         F: FnMut(u8, &[u8]),
 {
-    /// Create a new driver instance which will call
-    /// `callback(address: u8, buffer: &[u8])` when a new keyboard
-    /// report is received.
-    ///
-    /// `address` is the address of the USB device which received the
-    /// report and `buffer` is the contents of the report itself.
-    pub fn new(callback: F) -> Self {
-        let devices: [Option<Device>; MAX_DEVICES] = {
-            let mut devs: [MaybeUninit<Option<Device>>; MAX_DEVICES] =
-                unsafe { mem::MaybeUninit::uninit().assume_init() };
-            for dev in &mut devs[..] {
-                unsafe { ptr::write(dev.as_mut_ptr(), None) }
-            }
-            unsafe { mem::transmute(devs) }
-        };
 
-        Self { devices, callback }
+    pub fn new(callback: F) -> Self {
+        Self { devices: Vec::new(), callback }
     }
 }
 
@@ -63,9 +48,9 @@ impl<F> Driver for BootKeyboard<F>
     fn register(&mut self, usbhost: &mut dyn UsbHost, device: &mut crate::Device, desc: &DeviceDescriptor, conf: &mut DescriptorParser) -> Result<bool, UsbError> {
         if let Some(ref mut d) = self.devices.iter_mut().find(|d| d.is_none()) {
             **d = Some(Device::new(address, device.b_max_packet_size));
-            Ok(())
+            Ok(true)
         } else {
-            Err(DriverError::Permanent(address, "out of devices"))
+            Err(UsbError::Permanent("Too many kbd"))
         }
     }
 
@@ -79,14 +64,18 @@ impl<F> Driver for BootKeyboard<F>
         }
     }
 
-    fn tick(&mut self, millis: usize, host: &mut dyn UsbHost) -> Result<(), DriverError> {
+    fn tick(&mut self, host: &mut dyn UsbHost) -> Result<(), UsbError> {
         for dev in self.devices.iter_mut().filter_map(|d| d.as_mut()) {
             if let Err(TransferError::Permanent(e)) = dev.fsm(millis, host, &mut self.callback) {
-                return Err(DriverError::Permanent(dev.addr, e));
+                return Err(UsbError::Permanent(dev.addr, e));
             }
         }
-        Ok(())
     }
+
+    // fn tick(&mut self, host: &mut dyn UsbHost) -> Result<(), UsbError> {
+
+    //     Ok(())
+    // }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -158,8 +147,7 @@ impl Device {
             }
 
             DeviceState::WaitForSettle(until) => {
-                // TODO: This seems unnecessary. We're not using the
-                // device descriptor at all.
+                // TODO: This seems unnecessary. We're not using the device descriptor at all.
                 if millis > until {
                     let mut dev_desc: MaybeUninit<DeviceDescriptor> = MaybeUninit::uninit();
                     let buf = unsafe { to_slice_mut(&mut dev_desc) };

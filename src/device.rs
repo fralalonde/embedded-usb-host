@@ -11,6 +11,7 @@ enum DeviceState {
     Addressed,
     StabilizingUntil(u64),
     GetConfig,
+    // device needs to settle for 10ms after config set
     ConfigSet,
     ProtocolSet,
     SetIdle,
@@ -74,7 +75,8 @@ impl Device {
         if 0u8 == self.control_ep.device_address().into() {
             self.control_set(host, RequestCode::SetAddress, dev_addr.into(), 0, 0)?;
             self.control_ep.set_device_address(dev_addr);
-            self.state = DeviceState::StabilizingUntil(host.now_ms() + 10);
+            host.wait_ms(10);
+            self.state = DeviceState::ConfigSet/*(host.after_millis(10))*/;
             Ok(())
         } else {
             Err(UsbError::Permanent("Device Address Already Set"))
@@ -136,7 +138,7 @@ pub trait Driver {
 
     fn register(&mut self,  usbhost: &mut dyn UsbHost, device: &mut Device,  desc: &DeviceDescriptor, conf: &mut DescriptorParser) -> Result<bool, UsbError>;
 
-    fn unregister(&mut self, device: &Device);
+    fn unregister(&mut self, device: DevAddress);
 
     fn tick(&mut self, host: &mut dyn UsbHost) -> Result<(), UsbError>;
 }

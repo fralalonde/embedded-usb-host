@@ -18,9 +18,7 @@ use pck_size::PckSize;
 use status_bk::StatusBk;
 use status_pipe::StatusPipe;
 
-use crate::{
-    Endpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, WValue,
-};
+use crate::{Endpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, UsbError, WValue};
 
 use atsamd_hal::target_device::usb::{
     self,
@@ -29,7 +27,7 @@ use atsamd_hal::target_device::usb::{
 
 // Maximum time to wait for a control request with data to finish. cf
 // §9.2.6.1 of USB 2.0.
-const USB_TIMEOUT: u64 = 5 * 1024; // 5 Seconds
+const USB_TIMEOUT: u64 = 5000; // 5 Seconds
 
 // samd21 only supports 8 pipes.
 const MAX_PIPES: usize = 8;
@@ -145,7 +143,7 @@ impl Pipe<'_, '_> {
         w_value: WValue,
         w_index: u16,
         buf: Option<&mut [u8]>,
-        millis: fn() -> u64,
+        after_millis: fn(u64) -> u64,
     ) -> Result<usize, PipeErr> {
         let buflen = buf.as_ref().map_or(0, |b| b.len() as u16);
         let mut setup_packet = SetupPacket {
@@ -155,7 +153,7 @@ impl Pipe<'_, '_> {
             w_index,
             w_length: buflen,
         };
-        self.send(ep, PToken::Setup, &DataBuf::from(&mut setup_packet), NAK_LIMIT, millis)?;
+        self.send(ep, PToken::Setup, &DataBuf::from(&mut setup_packet), NAK_LIMIT, after_millis)?;
 
         let mut transfer_len = 0;
         if let Some(b) = buf {
@@ -163,11 +161,11 @@ impl Pipe<'_, '_> {
             // per-packet chunks) to complete. cf §9.2.6.4 of USB 2.0.
             match bm_request_type.direction()? {
                 RequestDirection::DeviceToHost => {
-                    transfer_len = self.in_transfer(ep, b, NAK_LIMIT, millis)?;
+                    transfer_len = self.in_transfer(ep, b, NAK_LIMIT, after_millis)?;
                 }
 
                 RequestDirection::HostToDevice => {
-                    transfer_len = self.out_transfer(ep, b, NAK_LIMIT, millis)?;
+                    transfer_len = self.out_transfer(ep, b, NAK_LIMIT, after_millis)?;
                 }
             }
         }
@@ -183,12 +181,12 @@ impl Pipe<'_, '_> {
             RequestDirection::HostToDevice => PToken::In,
         };
 
-        self.dispatch_retries(ep, token, NAK_LIMIT, millis)?;
+        self.dispatch_retries(ep, token, NAK_LIMIT, after_millis)?;
 
         Ok(transfer_len)
     }
 
-    fn send(&mut self, ep: &mut dyn Endpoint, token: PToken, buf: &DataBuf, nak_limit: usize, millis: fn() -> u64) -> Result<(), PipeErr> {
+    fn send(&mut self, ep: &mut dyn Endpoint, token: PToken, buf: &DataBuf, nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<(), PipeErr> {
         self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.ptr as u32) });
         // configure packet size PCKSIZE.SIZE
         self.desc.bank0.pcksize.modify(|_, w| {
@@ -196,10 +194,10 @@ impl Pipe<'_, '_> {
             unsafe { w.multi_packet_size().bits(0) }
         });
 
-        self.dispatch_retries(ep, token, nak_limit, millis)
+        self.dispatch_retries(ep, token, nak_limit, after_millis)
     }
 
-    pub fn in_transfer(&mut self, ep: &mut dyn Endpoint, buf: &mut [u8], nak_limit: usize, millis: fn() -> u64) -> Result<usize, PipeErr> {
+    pub fn in_transfer(&mut self, ep: &mut dyn Endpoint, buf: &mut [u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
         // TODO: pull this from pipe descriptor for this addr/ep.
         let packet_size = 8;
 
@@ -209,12 +207,10 @@ impl Pipe<'_, '_> {
         });
 
         // Read until we get a short packet (indicating that there's
-        // nothing left for us in this transaction) or the buffer is
-        // full.
+        // nothing left for us in this transaction) or the buffer is full.
         //
         // TODO: It is sometimes valid to get a short packet when
-        // variable length data is desired by the driver. cf §5.3.2 of
-        // USB 2.0.
+        // variable length data is desired by the driver. cf §5.3.2 of USB 2.0.
         let mut bytes_received = 0;
         while bytes_received < buf.len() {
             // Move the buffer pointer forward as we get data.
@@ -224,7 +220,7 @@ impl Pipe<'_, '_> {
             });
             self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
 
-            self.dispatch_retries(ep, PToken::In, nak_limit, millis)?;
+            self.dispatch_retries(ep, PToken::In, nak_limit, after_millis)?;
             let recvd = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
             bytes_received += recvd;
             if recvd < packet_size {
@@ -249,7 +245,7 @@ impl Pipe<'_, '_> {
         }
     }
 
-    pub fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8], nak_limit: usize, millis: fn() -> u64) -> Result<usize, PipeErr> {
+    pub fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
         self.desc.bank0.pcksize.modify(|_, w| {
             unsafe { w.byte_count().bits(buf.len() as u16) };
             unsafe { w.multi_packet_size().bits(0) }
@@ -261,7 +257,7 @@ impl Pipe<'_, '_> {
                 .bank0
                 .addr
                 .write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32 + bytes_sent as u32) });
-            self.dispatch_retries(ep, PToken::Out, nak_limit, millis)?;
+            self.dispatch_retries(ep, PToken::Out, nak_limit, after_millis)?;
 
             let sent = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
             bytes_sent += sent;
@@ -330,16 +326,17 @@ impl Pipe<'_, '_> {
         ep: &mut dyn Endpoint,
         token: PToken,
         retries: usize,
-        millis: fn() -> u64,
+        after_millis: fn(u64) -> u64,
     ) -> Result<(), PipeErr> {
         self.dispatch_packet(ep, token);
 
-        let until = millis() + USB_TIMEOUT;
-        let mut last_err = PipeErr::SWTimeout;
+        let until = after_millis(USB_TIMEOUT);
+        // let mut last_err = PipeErr::SWTimeout;
         let mut naks = 0;
         loop {
-            let now = millis();
-            if now > until { break }
+            if after_millis(0) > until {
+                return Err(PipeErr::SWTimeout)
+            }
 
             let res = self.dispatch_result(token);
             match res {
@@ -354,27 +351,25 @@ impl Pipe<'_, '_> {
                 }
                 Ok(false) => continue,
 
-                Err(e) => {
-                    // trace!("Pipe Error: {:?}", e);
-                    last_err = e;
-                    match last_err {
+                Err(err) => {
+                    match err {
                         PipeErr::DataToggle => self.dtgl(ep, token),
 
                         // Flow error on interrupt pipes means we got a NAK = no data
-                        PipeErr::Flow if ep.transfer_type() == TransferType::Interrupt => break,
+                        PipeErr::Flow if ep.transfer_type() == TransferType::Interrupt => return Err(PipeErr::Flow),
 
-                        PipeErr::Stall => break,
-                        _ => {
+                        PipeErr::Stall => return Err(PipeErr::Stall),
+
+                        _any => {
                             naks += 1;
                             if naks > retries {
-                                break;
+                                return Err(err);
                             }
                         }
                     }
                 }
             }
         }
-        Err(last_err)
     }
 
     fn dispatch_packet(&mut self, ep: &mut dyn Endpoint, token: PToken) {

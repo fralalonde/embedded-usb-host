@@ -83,7 +83,7 @@ impl UsbMidiDriver {
     fn register_port(&mut self, dev_addr: DevAddress, ep_addr: EpAddress, jack_id: JackId) {
         let info = PortInfo {
             port_id: PortId::Usb(self.next_port_id),
-            direction: ep_addr.direction().into()
+            direction: ep_addr.direction().into(),
         };
         self.next_port_id += 1;
         (self.with_midi)(&mut move |midi: &mut (dyn MidiPorts + Send + Sync)| {
@@ -102,10 +102,18 @@ impl UsbMidiDriver {
         });
     }
 
-    fn register_ep(&mut self, addr: DevAddress, ep: SingleEp) {
-        if let Some(eps) = map_entry_mut(&mut self.device_endpoints, addr, || Vec::new()) {
-            assert!(!eps.contains(&ep));
-            eps.push(ep);
+    fn register_ep(&mut self, addr: DevAddress, new_ep: SingleEp) {
+        if let Some(endpoints) = map_entry_mut(&mut self.device_endpoints, addr, || Vec::new()) {
+            if !endpoints.contains(&new_ep) {
+                debug!("Registered endpoint? {}", new_ep);
+                if endpoints.push(new_ep).is_ok() {
+                    // debug!("Registered endpoint? {}", new_ep)
+                } else {
+                    warn!("Too many endpoints")
+                }
+            } else {
+                warn!("Duplicate endpoint? {}", new_ep)
+            }
         } else {
             warn!("TooManyDevices")
         }
@@ -173,18 +181,19 @@ impl Driver for UsbMidiDriver {
         if let Some(midi_if) = midi_interface {
             if let Some(cfg) = config {
                 device.set_configuration(host, cfg.b_configuration_value)?;
-                debug!("USB MIDI Device Configuration Set {}", cfg.b_configuration_value)
+                debug!("USB MIDI Device Configuration Set {}", cfg.b_configuration_value);
+                host.wait_ms(10);
             } else {
                 error!("USB MIDI Device not configured");
                 return Ok(false);
             }
 
-            // TODO wait 10ms then set_interface
-            if let Err(e) = device.set_interface(host, midi_if.b_interface_number, midi_if.b_alternate_setting) {
-                // should not matter? "Selecting a configuration, by default, also activates the first alternate setting in each interface in that configuration."
-                warn!("USB MIDI Device set interface {}[{}] failed (ignored) {:?}", midi_if.b_interface_number,  midi_if.b_alternate_setting, e)
-            }
-            debug!("USB MIDI Device Interface Set {}[{}]",  midi_if.b_interface_number,  midi_if.b_alternate_setting);
+            // // TODO wait 10ms then set_interface
+            // if let Err(e) = device.set_interface(host, midi_if.b_interface_number, midi_if.b_alternate_setting) {
+            //     // should not matter? "Selecting a configuration, by default, also activates the first alternate setting in each interface in that configuration."
+            //     warn!("USB MIDI Device set interface {}[{}] failed (ignored) {:?}", midi_if.b_interface_number,  midi_if.b_alternate_setting, e)
+            // }
+            // debug!("USB MIDI Device Interface Set {}[{}]",  midi_if.b_interface_number,  midi_if.b_alternate_setting);
         }
 
         // phase 3 - create ports for each jack
@@ -217,12 +226,12 @@ impl Driver for UsbMidiDriver {
     }
 
 
-    fn unregister(&mut self, device: &Device) {
-        if let Some(eps) = self.device_endpoints.get(&device.get_address()) {
-            for ep in eps {
-                if let Some(pairs) = self.ep_jack_port.get(&(device.get_address(), ep.endpoint_address())) {
-                    for port in pairs.values() {
-                        (self.with_midi)(&mut |midi: &mut (dyn MidiPorts + Send + Sync)| midi.release_port(port))
+    fn unregister(&mut self, address: DevAddress) {
+        if let Some(endpoints) = self.device_endpoints.remove(&address) {
+            for ep in endpoints {
+                if let Some(jack_handle) = self.ep_jack_port.remove(&(address, ep.endpoint_address())) {
+                    for handle in jack_handle.values() {
+                        (self.with_midi)(&mut |midi: &mut (dyn MidiPorts + Send + Sync)| midi.release_port(handle))
                     }
                 }
             }
@@ -279,7 +288,8 @@ impl Driver for UsbMidiDriver {
                                         }
                                     }
                                 }
-                                Err(e) => warn!("USB MIDI IN Failed {:?}", e),
+                                // Err(e) => warn!("USB MIDI IN Failed {:?}", e),
+                                Err(e) => {}
                             }
                         }
                     }

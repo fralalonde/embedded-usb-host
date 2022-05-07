@@ -19,9 +19,20 @@ pub trait UsbHost {
     /// Endpoints may specify smaller packet sizes
     fn max_host_packet_size(&self) -> u16;
 
+    fn now(&self) -> u64 {
+        self.after_millis(0)
+    }
+
     /// Get current time in milliseconds
     /// The host holds the clock for all operations by drivers and the stack it belongs to
-    fn now_ms(&self) -> u64;
+    fn after_millis(&self, millis: u64) -> u64;
+
+    fn wait_ms(&self, millis: u64) {
+        let until = self.after_millis(millis);
+        loop {
+            if self.now() > until { break}
+        }
+    }
 
     /// Issue a control transfer with an optional data stage to
     /// `ep`. The data stage direction is determined by the direction

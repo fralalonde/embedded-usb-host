@@ -1,22 +1,22 @@
 use heapless::Vec;
-use crate::{AddressPool, DeviceDescriptor, Driver, HostEvent, UsbError, UsbHost};
+use crate::{AddressPool, DevAddress, DeviceDescriptor, Driver, HostEvent, UsbError, UsbHost};
 use crate::device::Device;
 use crate::parser::DescriptorParser;
 
 pub struct UsbStack<H> {
     host: H,
-    drivers: &'static mut (dyn Driver + Sync + Send),
+    driver: &'static mut (dyn Driver + Sync + Send),
     addr_pool: AddressPool,
-    devices: Vec<Device, 1>,
+    root: Option<DevAddress>,
 }
 
 impl<H: UsbHost> UsbStack<H> {
-    pub fn new(host: H, drivers: &'static mut (dyn Driver + Sync + Send)) -> Self {
+    pub fn new(host: H, driver: &'static mut (dyn Driver + Sync + Send)) -> Self {
         Self {
             host,
-            drivers,
+            driver,
             addr_pool: AddressPool::new(),
-            devices: Vec::new(),
+            root: None,
         }
     }
 
@@ -25,16 +25,19 @@ impl<H: UsbHost> UsbStack<H> {
             match host_event {
                 HostEvent::Ready(device, desc) => {
                     debug!("USB Host Ready {:?}", device);
-                    self.configure_dev(device, desc)
+                    assert!(self.root.replace(device.get_address()).is_none());
+                    let addr = self.configure_dev(device, desc);
                 }
                 HostEvent::Reset => {
+                    // Note: root dev address will always be 1
+                    if let Some(root_device) = self.root.take() {
+                        self.driver.unregister(root_device);
+                    }
                     debug!("USB Host Reset");
-                    // TODO clear pool, call drivers to unregister
                     self.addr_pool.reset();
-                    self.devices.clear();
                 }
                 HostEvent::Tick => {
-                    if let Err(err) = self.drivers.tick(&mut self.host) {
+                    if let Err(err) = self.driver.tick(&mut self.host) {
                         warn!("USB Driver error: {}", err)
                     }
                 }
@@ -51,17 +54,13 @@ impl<H: UsbHost> UsbStack<H> {
         match device.get_configuration_descriptors(&mut self.host, 0, &mut buf) {
             Ok(size) => {
                 let mut conf = DescriptorParser::new(&buf[0..size]);
-                match self.drivers.register(&mut self.host, &mut device, &desc, &mut conf) {
+                match self.driver.register(&mut self.host, &mut device, &desc, &mut conf) {
                     Ok(true) => info!("USB Driver registered device"),
                     Ok(false) => debug!("USB Driver rejected device"),
                     Err(e) => warn!("USB Driver Error {:?}", e)
                 }
             }
             Err(e) => warn!("USB Device Config Descriptor Failed: {:?}", e)
-        }
-
-        if let Err(err) = self.devices.push(device) {
-            warn!("USB Device configuration error: {}", err)
         }
     }
 }
