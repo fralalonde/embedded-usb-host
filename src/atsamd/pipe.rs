@@ -18,7 +18,7 @@ use pck_size::PckSize;
 use status_bk::StatusBk;
 use status_pipe::StatusPipe;
 
-use crate::{Endpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, UsbError, WValue};
+use crate::{Endpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, WValue};
 
 use atsamd_hal::target_device::usb::{
     self,

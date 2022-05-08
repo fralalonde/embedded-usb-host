@@ -203,7 +203,7 @@ impl UsbHost for HostController {
         }
     }
 
-    fn update(&mut self, addr_pool: &mut AddressPool) -> Option<HostEvent> {
+    fn update(&mut self) -> Option<HostEvent> {
         let prev_state = self.state;
         let mut host_event = None;
         let irq = self.next_irq();
@@ -222,20 +222,7 @@ impl UsbHost for HostController {
             }
             (Some(HostIrq::HostStartOfFrame), HostState::WaitSOF(until)) if self.now() >= until => {
                 self.state = HostState::Ready;
-                match stack::address_dev(self, addr_pool) {
-                    Ok((device, desc)) => {
-                        debug!("USB Ready {:?}", device);
-                        self.state = HostState::Ready;
-                        host_event = Some(HostEvent::Ready(device, desc));
-                    }
-                    Err(e) => {
-                        warn!("Enumeration error: {:?}", e);
-                        self.state = HostState::Error
-                    }
-                }
-            }
-            (Some(HostIrq::HostStartOfFrame), HostState::Ready) => {
-                host_event = Some(HostEvent::Tick);
+                host_event = Some(HostEvent::Ready);
             }
             _ => {}
         };

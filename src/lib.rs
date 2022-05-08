@@ -46,7 +46,7 @@ pub use class::*;
 pub use atsamd::*;
 
 /// Errors that can be generated when attempting to do a USB transfer.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[derive(defmt::Format)]
 pub enum UsbError {
     /// An error that may be retried.
@@ -57,6 +57,7 @@ pub enum UsbError {
 
     InvalidDescriptor,
     Driver,
+    TooManyDrivers,
     TooManyDevices,
     TooManyEndpoints,
 }

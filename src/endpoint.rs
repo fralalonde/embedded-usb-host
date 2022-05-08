@@ -1,10 +1,10 @@
 use hash32::Hasher;
-use crate::{DevAddress, DescriptorType, Direction, EndpointDescriptor, RequestCode, UsbError, TransferType, UsbHost, Audio1EndpointDescriptor};
+use crate::{DevAddress, DescriptorType, Direction, EndpointDescriptor, RequestCode, UsbError, TransferType, UsbHost, Audio1EndpointDescriptor, RequestRecipient};
 
-pub trait ControlEndpoint {
+pub trait ControlEndpoint: Endpoint {
     fn control_get_descriptor(&mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, UsbError>;
 
-    fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, lo_val: u8, hi_val: u8, index: u16) -> Result<(), UsbError>;
+    fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, index: u16) -> Result<(), UsbError>;
 }
 
 pub trait BulkEndpoint {
@@ -136,7 +136,7 @@ const ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[derive(defmt::Format)]
 #[derive(hash32_derive::Hash32)]
-pub struct EpAddress (u8);
+pub struct EpAddress(u8);
 
 impl EpAddress {
     /// Direction inferred from endpoint.rs address

@@ -1,18 +1,17 @@
 use crate::device::Device;
-use crate::{AddressPool, DeviceDescriptor, Endpoint, RequestCode, RequestType, UsbError, WValue};
+use crate::{DeviceDescriptor, Endpoint, RequestCode, RequestType, UsbError, WValue};
 
 #[derive(Debug)]
 #[derive(defmt::Format)]
 pub enum HostEvent {
     Reset,
-    Ready(Device, DeviceDescriptor),
-    Tick,
+    Ready,
 }
 
 /// Trait for host controller interface.
 pub trait UsbHost {
     /// Perform endpoint upkeep, read / write operations
-    fn update(&mut self, addr_pool: &mut AddressPool) -> Option<HostEvent>;
+    fn update(&mut self) -> Option<HostEvent>;
 
     /// Get the current connection max packet size
     /// This depends on negotiated USB link speed
@@ -27,11 +26,8 @@ pub trait UsbHost {
     /// The host holds the clock for all operations by drivers and the stack it belongs to
     fn after_millis(&self, millis: u64) -> u64;
 
-    fn wait_ms(&self, millis: u64) {
-        let until = self.after_millis(millis);
-        loop {
-            if self.now() > until { break}
-        }
+    fn delay_done(&self, instant: u64) -> bool {
+        self.now() >= instant
     }
 
     /// Issue a control transfer with an optional data stage to

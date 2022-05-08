@@ -64,9 +64,9 @@ impl<F> Driver for BootKeyboard<F>
         }
     }
 
-    fn tick(&mut self, host: &mut dyn UsbHost) -> Result<(), UsbError> {
+    fn run(&mut self, host: &mut dyn UsbHost) -> Result<(), UsbError> {
         for dev in self.devices.iter_mut().filter_map(|d| d.as_mut()) {
-            if let Err(TransferError::Permanent(e)) = dev.fsm(millis, host, &mut self.callback) {
+            if let Err(UsbError::Permanent(e)) = dev.fsm(millis, host, &mut self.callback) {
                 return Err(UsbError::Permanent(dev.addr, e));
             }
         }
@@ -78,57 +78,15 @@ impl<F> Driver for BootKeyboard<F>
     // }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-enum DeviceState {
-    Addressed,
-    WaitForSettle(usize),
-    GetConfig,
-    SetConfig(u8),
-    SetProtocol,
-    SetIdle,
-    SetReport,
-    Running,
-}
-
-struct Device {
-    addr: u8,
-    ep0: EP,
-    endpoints: [Option<EP>; MAX_ENDPOINTS],
-    state: DeviceState,
-}
 
 impl Device {
-    fn new(addr: u8, max_packet_size: u8) -> Self {
-        let endpoints: [Option<EP>; MAX_ENDPOINTS] = {
-            let mut eps: [MaybeUninit<Option<EP>>; MAX_ENDPOINTS] =
-                unsafe { mem::MaybeUninit::uninit().assume_init() };
-            for ep in &mut eps[..] {
-                unsafe { ptr::write(ep.as_mut_ptr(), None) }
-            }
-            unsafe { mem::transmute(eps) }
-        };
 
-        Self {
-            addr,
-            ep0: EP::new(
-                addr,
-                0,
-                0,
-                TransferType::Control,
-                Direction::In,
-                u16::from(max_packet_size),
-            ),
-            endpoints,
-            state: DeviceState::Addressed,
-        }
-    }
 
     fn fsm(
         &mut self,
-        millis: usize,
         host: &mut dyn UsbHost,
         callback: &mut dyn FnMut(u8, &[u8]),
-    ) -> Result<(), TransferError> {
+    ) -> Result<(), UsbError> {
         // TODO: either we need another `control_transfer` that
         // doesn't take data, or this `none` value needs to be put in
         // the usb-host layer. None of these options are good.
@@ -142,109 +100,6 @@ impl Device {
         }
 
         match self.state {
-            DeviceState::Addressed => {
-                self.state = DeviceState::WaitForSettle(millis + SETTLE_DELAY)
-            }
-
-            DeviceState::WaitForSettle(until) => {
-                // TODO: This seems unnecessary. We're not using the device descriptor at all.
-                if millis > until {
-                    let mut dev_desc: MaybeUninit<DeviceDescriptor> = MaybeUninit::uninit();
-                    let buf = unsafe { to_slice_mut(&mut dev_desc) };
-                    let len = host.control_transfer(
-                        &mut self.ep0,
-                        RequestType::from((
-                            RequestDirection::DeviceToHost,
-                            RequestKind::Standard,
-                            RequestRecipient::Device,
-                        )),
-                        RequestCode::GetDescriptor,
-                        WValue::from((0, DescriptorType::Device as u8)),
-                        0,
-                        Some(buf),
-                    )?;
-                    assert!(len == mem::size_of::<DeviceDescriptor>());
-                    self.state = DeviceState::GetConfig
-                }
-            }
-
-            DeviceState::GetConfig => {
-                let mut conf_desc: MaybeUninit<ConfigurationDescriptor> = MaybeUninit::uninit();
-                let desc_buf = unsafe { to_slice_mut(&mut conf_desc) };
-                let len = host.control_transfer(
-                    &mut self.ep0,
-                    RequestType::from((
-                        RequestDirection::DeviceToHost,
-                        RequestKind::Standard,
-                        RequestRecipient::Device,
-                    )),
-                    RequestCode::GetDescriptor,
-                    WValue::from((0, DescriptorType::Configuration as u8)),
-                    0,
-                    Some(desc_buf),
-                )?;
-                assert!(len == mem::size_of::<ConfigurationDescriptor>());
-                let conf_desc = unsafe { conf_desc.assume_init() };
-
-                if (conf_desc.w_total_length as usize) > CONFIG_BUFFER_LEN {
-                    trace!("config descriptor: {:?}", conf_desc);
-                    return Err(TransferError::Permanent("config descriptor too large"));
-                }
-
-                // TODO: do a real allocation later. For now, keep a
-                // large-ish static buffer and take an appropriately
-                // sized slice into it for the transfer.
-                let mut config =
-                    unsafe { MaybeUninit::<[u8; CONFIG_BUFFER_LEN]>::uninit().assume_init() };
-                let config_buf = &mut config[..conf_desc.w_total_length as usize];
-                let len = host.control_transfer(
-                    &mut self.ep0,
-                    RequestType::from((
-                        RequestDirection::DeviceToHost,
-                        RequestKind::Standard,
-                        RequestRecipient::Device,
-                    )),
-                    RequestCode::GetDescriptor,
-                    WValue::from((0, DescriptorType::Configuration as u8)),
-                    0,
-                    Some(config_buf),
-                )?;
-                assert!(len == conf_desc.w_total_length as usize);
-                let (interface_num, ep) =
-                    ep_for_bootkbd(config_buf).expect("no boot keyboard found");
-                info!("Boot keyboard found on {:?}", ep);
-
-                self.endpoints[0] = Some(EP::new(
-                    self.addr,
-                    ep.b_endpoint_address & 0x7f,
-                    interface_num,
-                    TransferType::Interrupt,
-                    Direction::In,
-                    ep.w_max_packet_size,
-                ));
-
-                // TODO: browse configs and pick the "best" one. But
-                // this should always be ok, at least.
-                self.state = DeviceState::SetConfig(1)
-            }
-
-            DeviceState::SetConfig(config_index) => {
-                host.control_transfer(
-                    &mut self.ep0,
-                    RequestType::from((
-                        RequestDirection::HostToDevice,
-                        RequestKind::Standard,
-                        RequestRecipient::Device,
-                    )),
-                    RequestCode::SetConfiguration,
-                    WValue::from((config_index, 0)),
-                    0,
-                    none,
-                )?;
-
-                self.state = DeviceState::SetProtocol;
-            }
-
             DeviceState::SetProtocol => {
                 if let Some(ref ep) = self.endpoints[0] {
                     host.control_transfer(
@@ -254,7 +109,7 @@ impl Device {
                             RequestKind::Class,
                             RequestRecipient::Interface,
                         )),
-                        RequestCode::SetInterface,
+                        RequestCode::SetProtocol,
                         WValue::from((0, 0)),
                         u16::from(ep.interface_num),
                         None,
@@ -262,7 +117,7 @@ impl Device {
 
                     self.state = DeviceState::SetIdle;
                 } else {
-                    return Err(TransferError::Permanent("no boot keyboard"));
+                    return Err(UsbError::Permanent("no boot keyboard"));
                 }
             }
 
@@ -308,26 +163,32 @@ impl Device {
                     log::set_max_level(LevelFilter::Info);
                     self.state = DeviceState::Running
                 } else {
-                    return Err(TransferError::Permanent("no boot keyboard"));
+                    return Err(UsbError::Permanent("no boot keyboard"));
                 }
             }
 
             DeviceState::Running => {
+                if let Some(driver) = driver {
+                    if let Err(err) = driver.tick(&mut self.host, dev) {
+                        warn!("USB Driver error: {}", err)
+                    }
+                }
+
                 if let Some(ref mut ep) = self.endpoints[0] {
                     let mut b: [u8; 8] = [0; 8];
                     let buf = &mut b[..];
                     match host.in_transfer(ep, buf) {
-                        Err(TransferError::Permanent(msg)) => {
+                        Err(UsbError::Permanent(msg)) => {
                             error!("reading report: {}", msg);
-                            return Err(TransferError::Permanent(msg));
+                            return Err(UsbError::Permanent(msg));
                         }
-                        Err(TransferError::Retry(_)) => return Ok(()),
+                        Err(UsbError::Retry(_)) => return Ok(()),
                         Ok(_) => {
                             callback(self.addr, buf);
                         }
                     }
                 } else {
-                    return Err(TransferError::Permanent("no boot keyboard"));
+                    return Err(UsbError::Permanent("no boot keyboard"));
                 }
             }
         }
@@ -897,9 +758,9 @@ mod test {
             _w_value: WValue,
             _w_index: u16,
             _buf: Option<&mut [u8]>,
-        ) -> Result<usize, TransferError> {
+        ) -> Result<usize, UsbError> {
             if self.fail {
-                Err(TransferError::Permanent("foo"))
+                Err(UsbError::Permanent("foo"))
             } else {
                 Ok(0)
             }
@@ -909,9 +770,9 @@ mod test {
             &mut self,
             _ep: &mut dyn Endpoint,
             _buf: &mut [u8],
-        ) -> Result<usize, TransferError> {
+        ) -> Result<usize, UsbError> {
             if self.fail {
-                Err(TransferError::Permanent("foo"))
+                Err(UsbError::Permanent("foo"))
             } else {
                 Ok(0)
             }
@@ -921,9 +782,9 @@ mod test {
             &mut self,
             _ep: &mut dyn Endpoint,
             _buf: &[u8],
-        ) -> Result<usize, TransferError> {
+        ) -> Result<usize, UsbError> {
             if self.fail {
-                Err(TransferError::Permanent("foo"))
+                Err(UsbError::Permanent("foo"))
             } else {
                 Ok(0)
             }
