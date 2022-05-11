@@ -1,21 +1,32 @@
 use core::mem;
 
-use crate::{ConfigurationDescriptor, ControlEndpoint, DescriptorType, DeviceDescriptor, Endpoint, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, SingleEp, UsbError, UsbHost, WValue, Audio1EndpointDescriptor, DescriptorParser, ConfigNum, EpAddress, TransferType, EndpointDescriptor};
+use crate::{ConfigurationDescriptor, ControlEndpoint, DescriptorType, DeviceDescriptor, HostEndpoint, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, UsbError, UsbHost, WValue, DescriptorParser, ConfigNum, EpAddress, TransferType, InterfaceNum, EndpointProperties, MaxPacketSize, DataToggle};
 use crate::address::{DevAddress};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[derive(defmt::Format)]
 pub enum DeviceState {
-    Init,
-    // settle for 10ms after address set
-    AddressSet(u64),
-    // settle for 10ms after config set
-    ConfigSet(u64),
-    ProtocolSet,
-    // HID(HidStates)
+    /// Device needs an address
+    SetAddress,
+
+    /// Device needs a configuration to be selected
+    SetConfig(u64),
+
+    /// Device needs an interface to be selected (maybe)
+    SetInterface(InterfaceNum, u64),
+
+    /// HID
+    SetProtocol(InterfaceNum),
+    /// HID
+    SetReport(InterfaceNum),
+    /// HID
+    SetIdle,
+
+    /// Device is active and polled
     Running,
+
+    /// No driver
     Orphan,
-    Error(UsbError),
 }
 
 #[derive(Debug, PartialEq)]
@@ -26,6 +37,7 @@ pub struct Device {
     max_packet_size: u16,
     in_toggle: bool,
     out_toggle: bool,
+    error: Option<UsbError>,
 }
 
 impl hash32::Hash for Device {
@@ -37,11 +49,12 @@ impl hash32::Hash for Device {
 impl Device {
     pub fn new(max_bus_packet_size: u16) -> Self {
         Self {
-            state: DeviceState::Init,
+            state: DeviceState::SetAddress,
             device_address: DevAddress::from(0),
             max_packet_size: max_bus_packet_size,
+            error: None,
             in_toggle: false,
-            out_toggle: false
+            out_toggle: false,
         }
     }
 
@@ -53,12 +66,12 @@ impl Device {
         self.state = state
     }
 
-    pub fn endpoint(&self, desc: &EndpointDescriptor) -> Result<SingleEp, UsbError> {
-        SingleEp::try_from((&self.device_address, desc))
+    pub fn error(&self) -> Option<UsbError> {
+        self.error
     }
 
-    pub fn audio1_endpoint(&self, desc: &Audio1EndpointDescriptor) -> Result<SingleEp, UsbError> {
-        SingleEp::try_from((&self.device_address, desc))
+    pub fn set_error(&mut self, error: UsbError) {
+        self.error = Some(error)
     }
 
     pub fn get_device_descriptor(&mut self, host: &mut dyn UsbHost) -> Result<DeviceDescriptor, UsbError> {
@@ -84,7 +97,7 @@ impl Device {
         if 0u8 == self.device_address.into() {
             self.control_set(host, RequestCode::SetAddress, RequestRecipient::Device, dev_addr.into(), 0, 0)?;
             self.device_address = dev_addr;
-            self.state = DeviceState::AddressSet(host.after_millis(10));
+            self.state = DeviceState::SetConfig(host.after_millis(10));
             Ok(())
         } else {
             Err(UsbError::Permanent("Device Address Already Set"))
@@ -98,12 +111,26 @@ impl Device {
         self.control_set(host, RequestCode::SetConfiguration, RequestRecipient::Device, config_num, 0, 0)
     }
 
-    pub fn set_interface(&mut self, host: &mut dyn UsbHost, iface_num: u8, alt_num: u8) -> Result<(), UsbError> {
-        self.control_set(host, RequestCode::SetInterface, RequestRecipient::Interface, alt_num, 0, iface_num as u16)
+    pub fn set_interface(&mut self, host: &mut dyn UsbHost, iface_num: u8, _alt_num: u8) -> Result<(), UsbError> {
+        host.control_transfer(
+            self,
+            RequestType::from((
+                RequestDirection::HostToDevice,
+                RequestKind::Class,
+                RequestRecipient::Interface,
+            )),
+            RequestCode::SetInterface,
+            WValue::from((0, 0)),
+            u16::from(iface_num),
+            None,
+        )?;
+        Ok(())
     }
 }
 
-impl Endpoint for Device {
+impl HostEndpoint for Device {}
+
+impl EndpointProperties for Device {
     fn device_address(&self) -> DevAddress {
         self.device_address
     }
@@ -115,11 +142,15 @@ impl Endpoint for Device {
     fn transfer_type(&self) -> TransferType {
         TransferType::Control
     }
+}
 
+impl MaxPacketSize for Device {
     fn max_packet_size(&self) -> u16 {
-       self.max_packet_size
+        self.max_packet_size
     }
+}
 
+impl DataToggle for Device {
     fn in_toggle(&self) -> bool {
         self.in_toggle
     }
@@ -150,11 +181,23 @@ impl ControlEndpoint for Device {
     }
 
     /// Generic control write
-    fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, windex: u16) -> Result<(), UsbError> {
+    fn control_set(&mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, windex: u16) -> Result<(), UsbError> {
         host.control_transfer(
             self,
             RequestType::from((RequestDirection::HostToDevice, RequestKind::Standard, recip)),
-            param,
+            code,
+            WValue::from((lo_val, hi_val)),
+            windex,
+            None)?;
+        Ok(())
+    }
+
+    /// Generic control write
+    fn control_set_class(&mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, windex: u16) -> Result<(), UsbError> {
+        host.control_transfer(
+            self,
+            RequestType::from((RequestDirection::HostToDevice, RequestKind::Class, recip)),
+            code,
             WValue::from((lo_val, hi_val)),
             windex,
             None)?;
@@ -169,14 +212,15 @@ fn to_slice_mut<T>(v: &mut T) -> &mut [u8] {
 
 /// Trait for drivers on the USB host.
 pub trait Driver {
-    fn accept(&self, device: &mut Device, conf: &mut DescriptorParser) -> Option<ConfigNum>;
+    fn accept(&self, device: &mut Device, conf: &mut DescriptorParser) -> Option<(ConfigNum, InterfaceNum)>;
+
     fn register(&mut self, device: &mut Device, conf: &mut DescriptorParser) -> Result<(), UsbError>;
 
     fn unregister(&mut self, device: DevAddress);
 
-    fn set_protocol(&mut self, host: &mut dyn UsbHost, device: &mut Device) -> Result<(), UsbError> {
-        device.set_interface(host, 0, 0);
-        Ok(())
+    /// HID drivers may overload this to return `DeviceState::SetProtocol`
+    fn next_state_after_interface_set(&self) -> DeviceState {
+        DeviceState::Running
     }
 
     fn run(&mut self, host: &mut dyn UsbHost, device: &mut Device) -> Result<(), UsbError>;

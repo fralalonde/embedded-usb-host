@@ -1,5 +1,4 @@
-//! A collection of structures for use in setting up devices during
-//! enumeration.
+//! A collection of structures for use in setting up devices during enumeration.
 //!
 //! These types are all defined in §9.3 of the USB 2.0 specification.
 //!
@@ -7,16 +6,15 @@
 //! when necessary to ensure that they are able to be directly
 //! marshalled to the bus.
 
-use core::convert::{TryFrom, TryInto};
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub struct RequestType(u8);
+
 impl RequestType {
-    pub fn recipient(self) -> Result<RequestRecipient, &'static str> {
+    pub fn recipient(self) -> Option<RequestRecipient> {
         const POS: u8 = 0;
         const MASK: u8 = 0x1f;
-        (self.0 & (MASK << POS)).try_into()
+        RequestRecipient::from_repr(self.0 & (MASK << POS))
     }
 
     pub fn set_recipient(&mut self, v: RequestRecipient) {
@@ -26,10 +24,10 @@ impl RequestType {
         self.0 |= v as u8 & MASK;
     }
 
-    pub fn kind(self) -> Result<RequestKind, &'static str> {
+    pub fn kind(self) -> Option<RequestKind> {
         const POS: u8 = 5;
         const MASK: u8 = 0x3;
-        (self.0 & (MASK << POS)).try_into()
+        RequestKind::from_repr(self.0 & (MASK << POS))
     }
 
     pub fn set_kind(&mut self, v: RequestKind) {
@@ -39,10 +37,10 @@ impl RequestType {
         self.0 |= v as u8 & MASK;
     }
 
-    pub fn direction(self) -> Result<RequestDirection, &'static str> {
+    pub fn direction(self) -> Option<RequestDirection> {
         const POS: u8 = 7;
         const MASK: u8 = 0x1;
-        (self.0 & (MASK << POS)).try_into()
+        RequestDirection::from_repr(self.0 & (MASK << POS))
     }
 
     pub fn set_direction(&mut self, v: RequestDirection) {
@@ -52,67 +50,35 @@ impl RequestType {
         self.0 |= v as u8 & MASK;
     }
 }
+
 impl From<(RequestDirection, RequestKind, RequestRecipient)> for RequestType {
     fn from(v: (RequestDirection, RequestKind, RequestRecipient)) -> Self {
         Self(v.0 as u8 | v.1 as u8 | v.2 as u8)
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, strum_macros::FromRepr)]
+#[repr(u8)]
 pub enum RequestDirection {
     HostToDevice = 0x00,
     DeviceToHost = 0x80,
 }
-impl TryFrom<u8> for RequestDirection {
-    type Error = &'static str;
 
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            0x00 => Ok(Self::HostToDevice),
-            0x80 => Ok(Self::DeviceToHost),
-            _ => Err("direction can only be 0x00 or 0x80"),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, strum_macros::FromRepr)]
+#[repr(u8)]
 pub enum RequestKind {
     Standard = 0x00,
     Class = 0x20,
     Vendor = 0x40,
 }
-impl TryFrom<u8> for RequestKind {
-    type Error = &'static str;
 
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            0x00 => Ok(Self::Standard),
-            0x20 => Ok(Self::Class),
-            0x40 => Ok(Self::Vendor),
-            _ => Err("type can only be 0x00, 0x20, or 0x40"),
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, strum_macros::FromRepr)]
+#[repr(u8)]
 pub enum RequestRecipient {
     Device = 0x00,
     Interface = 0x01,
     Endpoint = 0x02,
     Other = 0x03,
-}
-impl TryFrom<u8> for RequestRecipient {
-    type Error = &'static str;
-
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            0x00 => Ok(Self::Device),
-            0x01 => Ok(Self::Interface),
-            0x02 => Ok(Self::Endpoint),
-            0x03 => Ok(Self::Other),
-            _ => Err("recipient can only be between 0 and 3"),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -154,7 +120,7 @@ impl From<(u8, u8)> for WValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
 pub enum RequestCode {
     GetStatus = 0,
     ClearFeature = 1,
@@ -167,27 +133,9 @@ pub enum RequestCode {
     GetInterface = 10,
     SetInterface = 11,
     SynchFrame = 12,
-}
-impl TryFrom<u8> for RequestCode {
-    type Error = &'static str;
 
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            0 => Ok(Self::GetStatus),
-            1 => Ok(Self::ClearFeature),
-            3 => Ok(Self::SetFeature),
-            5 => Ok(Self::SetAddress),
-            6 => Ok(Self::GetDescriptor),
-            7 => Ok(Self::SetDescriptor),
-            8 => Ok(Self::GetConfiguration),
-            9 => Ok(Self::SetConfiguration),
-            10 => Ok(Self::GetInterface),
-            11 => Ok(Self::SetInterface),
-            12 => Ok(Self::SynchFrame),
-            _ => Err("invalid request value"),
-        }
-    }
 }
+
 impl Default for RequestCode {
     fn default() -> Self {
         Self::GetStatus

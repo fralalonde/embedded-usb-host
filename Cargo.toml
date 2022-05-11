@@ -19,12 +19,13 @@ strum_macros = "0.23"
 
 atsamd-hal = { version = "0.14", optional = true }
 
+stm32f4xx-hal = { version = "0.13", features = ["otg-fs"], optional = true }
+
 hash32 = "0.2"
 hash32-derive = "0.1"
 
 # TODO make defmt & hash32 optional
 defmt = "0.3"
-
 
 # TODO make USB descriptor string handling optional
 utf16string = { path = "../utf16string", default-features = false, features = ["defmt"] }
@@ -39,7 +40,9 @@ embedded-midi = { path = "../embedded-midi", features = ["defmt"] }
 # TODO make these crates optional
 defmt = []
 
-atsamd = []
+atsamd = ["atsamd-hal"]
+stm32f411 = [ "stm32f4xx-hal/stm32f411", "stm32f4xx-hal/usb_fs"]
+
 samd11c = ["atsamd", "atsamd-hal/samd11c"]
 samd21e = ["atsamd", "atsamd-hal/samd21e"]
 samd21g = ["atsamd", "atsamd-hal/samd21g"]

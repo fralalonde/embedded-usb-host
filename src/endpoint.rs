@@ -1,10 +1,12 @@
 use hash32::Hasher;
-use crate::{DevAddress, DescriptorType, Direction, EndpointDescriptor, RequestCode, UsbError, TransferType, UsbHost, Audio1EndpointDescriptor, RequestRecipient};
+use crate::{DevAddress, DescriptorType, Direction, RequestCode, UsbError, TransferType, UsbHost, RequestRecipient, MaxPacketSize};
 
-pub trait ControlEndpoint: Endpoint {
+pub trait ControlEndpoint: HostEndpoint {
     fn control_get_descriptor(&mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, UsbError>;
 
-    fn control_set(&mut self, host: &mut dyn UsbHost, param: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, index: u16) -> Result<(), UsbError>;
+    fn control_set(&mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, index: u16) -> Result<(), UsbError>;
+
+    fn control_set_class(&mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, windex: u16) -> Result<(), UsbError>;
 }
 
 pub trait BulkEndpoint {
@@ -13,87 +15,60 @@ pub trait BulkEndpoint {
     fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError>;
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 #[derive(defmt::Format)]
-// #[derive(hash32_derive::Hash32)]
-pub struct SingleEp {
-    device_address: DevAddress,
+pub struct Endpoint {
+    props: EpProps,
     max_packet_size: u16,
-    endpoint_address: EpAddress,
-    transfer_type: TransferType,
     in_toggle: bool,
     out_toggle: bool,
 }
 
-impl hash32::Hash for SingleEp {
+impl hash32::Hash for Endpoint {
     fn hash<H>(&self, state: &mut H) where H: Hasher {
-        state.write(&[self.device_address.into(), self.endpoint_address.into()])
+        self.props.hash(state)
     }
 }
 
-impl SingleEp {
-    pub fn control(device_address: DevAddress, max_packet_size: u16) -> SingleEp {
-        SingleEp {
-            device_address,
-            endpoint_address: 0.into(),
-            transfer_type: TransferType::Control,
+impl Endpoint {
+    pub fn from_raw(device_address: DevAddress, max_packet_size: u16, b_endpoint_address: u8, bm_attributes: u8) -> Self {
+        Endpoint {
+            props: EpProps {
+                device_address,
+                endpoint_address: EpAddress::from(b_endpoint_address),
+                transfer_type: TransferType::from(bm_attributes),
+            },
             max_packet_size,
             in_toggle: false,
             out_toggle: false,
         }
     }
 
+    pub fn props(&self) -> &EpProps {
+        &self.props
+    }
 
     pub fn set_max_packet_size(&mut self, size: u16) {
         self.max_packet_size = size
     }
 
     pub fn set_device_address(&mut self, addr: DevAddress) {
-        self.device_address = addr
+        self.props.device_address = addr
     }
 }
 
-impl TryFrom<(&DevAddress, &EndpointDescriptor)> for SingleEp {
-    type Error = UsbError;
 
-    fn try_from(addr_ep_desc: (&DevAddress, &EndpointDescriptor)) -> Result<Self, Self::Error> {
-        Ok(SingleEp {
-            device_address: (*addr_ep_desc.0).into(),
-            endpoint_address: addr_ep_desc.1.b_endpoint_address.into(),
-            transfer_type: TransferType::from_repr(addr_ep_desc.1.bm_attributes).ok_or(UsbError::InvalidDescriptor)?,
-            max_packet_size: addr_ep_desc.1.w_max_packet_size_lo as u16,
-            in_toggle: false,
-            out_toggle: false,
-        })
-    }
+/// Read-only utility structure that captures an endpoint's static properties.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(defmt::Format)]
+#[derive(hash32_derive::Hash32)]
+pub struct EpProps {
+    device_address: DevAddress,
+    endpoint_address: EpAddress,
+    transfer_type: TransferType,
 }
 
-impl TryFrom<(&DevAddress, &Audio1EndpointDescriptor)> for SingleEp {
-    type Error = UsbError;
-
-    fn try_from(addr_ep_desc: (&DevAddress, &Audio1EndpointDescriptor)) -> Result<Self, Self::Error> {
-        Ok(SingleEp {
-            device_address: (*addr_ep_desc.0).into(),
-            endpoint_address: addr_ep_desc.1.b_endpoint_address.into(),
-            transfer_type: TransferType::from_repr(addr_ep_desc.1.bm_attributes).ok_or(UsbError::InvalidDescriptor)?,
-            max_packet_size: addr_ep_desc.1.w_max_packet_size_lo as u16,
-            in_toggle: false,
-            out_toggle: false,
-        })
-    }
-}
-
-// impl BulkEndpoint for SingleEp {
-//     fn bulk_in(&mut self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError> {
-//         host.in_transfer(self, buffer)
-//     }
-//
-//     fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError> {
-//         host.out_transfer(self, buffer)
-//     }
-// }
-
-impl Endpoint for SingleEp {
+impl EndpointProperties for EpProps {
     fn device_address(&self) -> DevAddress {
         self.device_address
     }
@@ -105,11 +80,29 @@ impl Endpoint for SingleEp {
     fn transfer_type(&self) -> TransferType {
         self.transfer_type
     }
+}
 
+impl EndpointProperties for Endpoint {
+    fn device_address(&self) -> DevAddress {
+        self.props.device_address
+    }
+
+    fn endpoint_address(&self) -> EpAddress {
+        self.props.endpoint_address
+    }
+
+    fn transfer_type(&self) -> TransferType {
+        self.props.transfer_type
+    }
+}
+
+impl MaxPacketSize for Endpoint {
     fn max_packet_size(&self) -> u16 {
         self.max_packet_size
     }
+}
 
+impl DataToggle for Endpoint {
     fn in_toggle(&self) -> bool {
         self.in_toggle
     }
@@ -133,6 +126,9 @@ const ENDPOINT_DIRECTION_MASK: u8 = 0x80;
 /// Bits 3..0 are the endpoint.rs number
 const ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 
+/// Max endpoint address is 0x7F - [0..63] + direction bit
+const ENDPOINT_ADDRESS_MASK: u8 = ENDPOINT_DIRECTION_MASK + ENDPOINT_NUMBER_MASK;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[derive(defmt::Format)]
 #[derive(hash32_derive::Hash32)]
@@ -146,27 +142,29 @@ impl EpAddress {
             _ => Direction::In
         }
     }
-    /// Endpoint absolute number, irrespective of direction
-    /// Two endpoints per interface can share the same absolute number (one IN, one OUT)
+
+    /// Absolute endpoint number, irrespective of direction
+    /// Two endpoints per interface can share the same absolute number (one In, one Out)
     pub fn absolute(&self) -> u8 {
         self.0 & ENDPOINT_NUMBER_MASK
     }
 }
 
 impl From<u8> for EpAddress {
-    fn from(ep_addr: u8) -> Self {
-        Self(ep_addr)
+    fn from(addr: u8) -> Self {
+        Self(addr & ENDPOINT_ADDRESS_MASK)
     }
 }
 
 impl From<EpAddress> for u8 {
-    fn from(ep_addr: EpAddress) -> Self {
-        ep_addr.0
+    fn from(addr: EpAddress) -> Self {
+        addr.0
     }
 }
 
-/// `Endpoint` defines the USB endpoint.rs for various transfers.
-pub trait Endpoint {
+impl HostEndpoint for Endpoint {}
+
+pub trait EndpointProperties {
     /// Address of the device owning this endpoint.rs
     fn device_address(&self) -> DevAddress;
 
@@ -180,10 +178,9 @@ pub trait Endpoint {
 
     /// The type of transfer this endpoint.rs uses
     fn transfer_type(&self) -> TransferType;
+}
 
-    /// The maximum packet size for this endpoint.rs
-    fn max_packet_size(&self) -> u16;
-
+pub trait DataToggle {
     /// The data toggle sequence bit for the next transfer from the
     /// device to the host.
     fn in_toggle(&self) -> bool;
@@ -200,3 +197,5 @@ pub trait Endpoint {
     /// sequence bit for the next host to device transfer.
     fn set_out_toggle(&mut self, toggle: bool);
 }
+
+pub trait HostEndpoint: DataToggle + MaxPacketSize + EndpointProperties {}

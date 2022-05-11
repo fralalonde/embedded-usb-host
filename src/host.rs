@@ -1,5 +1,4 @@
-use crate::device::Device;
-use crate::{DeviceDescriptor, Endpoint, RequestCode, RequestType, UsbError, WValue};
+use crate::{HostEndpoint, RequestCode, RequestType, UsbError, WValue};
 
 #[derive(Debug)]
 #[derive(defmt::Format)]
@@ -37,7 +36,7 @@ pub trait UsbHost {
     /// On success, the amount of data transferred into `buf` is returned.
     fn control_transfer(
         &mut self,
-        ep: &mut dyn Endpoint,
+        ep: &mut dyn HostEndpoint,
         bm_request_type: RequestType,
         b_request: RequestCode,
         w_value: WValue,
@@ -47,10 +46,10 @@ pub trait UsbHost {
 
     /// Issue a transfer from `ep` to the host.
     /// On success, the amount of data transferred into `buf` is returned.
-    fn in_transfer(&mut self, ep: &mut dyn Endpoint, buf: &mut [u8]) -> Result<usize, UsbError>;
+    fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8]) -> Result<usize, UsbError>;
 
     /// Issue a transfer from the host to `ep`.
     /// On success, the amount of data transferred from `buf` is returned.
     /// This should always be equal to `buf.len()`.
-    fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8]) -> Result<usize, UsbError>;
+    fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8]) -> Result<usize, UsbError>;
 }

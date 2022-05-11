@@ -9,6 +9,7 @@
 
 use core::convert::TryFrom;
 use core::mem;
+use crate::MaxPacketSize;
 
 #[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
 #[derive(defmt::Format)]
@@ -199,11 +200,17 @@ pub struct EndpointDescriptor {
     pub b_descriptor_type: DescriptorType,
     pub b_endpoint_address: u8,
     pub bm_attributes: u8,
-    // FIXME unaligned u16 causes issues, replaced with lo/hi u8 pair
+    // FIXME unaligned u16 causes defmt issues, replaced with lo/hi u8 pair + MaxPacketSize trait
     // pub w_max_packet_size: u16,
     pub w_max_packet_size_lo: u8,
     pub w_max_packet_size_hi: u8,
     pub b_interval: u8,
+}
+
+impl MaxPacketSize for EndpointDescriptor {
+    fn max_packet_size(&self) -> u16 {
+        ((self.w_max_packet_size_hi as u16) << 8) + self.w_max_packet_size_lo as u16
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -214,13 +221,19 @@ pub struct Audio1EndpointDescriptor {
     pub b_descriptor_type: DescriptorType,
     pub b_endpoint_address: u8,
     pub bm_attributes: u8,
-    // FIXME unaligned u16 causes issues, replaced with lo/hi u8 pair
+    // FIXME unaligned u16 causes defmt issues, replaced with lo/hi u8 pair + MaxPacketSize trait
     // pub w_max_packet_size: u16,
     pub w_max_packet_size_lo: u8,
     pub w_max_packet_size_hi: u8,
     pub b_interval: u8,
-    pub shit1: u8,
-    pub shit2: u8,
+    pub audio1: u8,
+    pub audio2: u8,
+}
+
+impl MaxPacketSize for Audio1EndpointDescriptor {
+    fn max_packet_size(&self) -> u16 {
+        ((self.w_max_packet_size_hi as u16) << 8) + self.w_max_packet_size_lo as u16
+    }
 }
 
 #[cfg(test)]

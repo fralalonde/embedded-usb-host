@@ -16,7 +16,7 @@ extern crate defmt;
 extern crate hash32_derive;
 
 pub mod descriptor;
-pub mod setup;
+pub mod control;
 pub mod address;
 pub mod class;
 pub mod device;
@@ -29,12 +29,15 @@ pub mod driver;
 #[cfg(feature = "atsamd")]
 pub mod atsamd;
 
+#[cfg(feature = "stm32")]
+pub mod stm32;
+
 use hash32::Hasher;
 use heapless::FnvIndexMap;
 pub use descriptor::*;
 pub use device::*;
 pub use parser::*;
-pub use setup::*;
+pub use control::*;
 pub use address::*;
 pub use stack::*;
 pub use endpoint::*;
@@ -57,6 +60,8 @@ pub enum UsbError {
 
     InvalidDescriptor,
     Driver,
+    NoDriver,
+    OutOfRange,
     TooManyDrivers,
     TooManyDevices,
     TooManyEndpoints,
@@ -75,6 +80,14 @@ pub enum TransferType {
     Interrupt = 3,
 }
 
+const TRANSFER_TYPE_MASK: u8 = 0b00000011;
+
+impl From<u8> for TransferType {
+    fn from(ttype: u8) -> Self {
+        unsafe { TransferType::from_repr(ttype & TRANSFER_TYPE_MASK).unwrap_unchecked() }
+    }
+}
+
 impl hash32::Hash for TransferType {
     fn hash<H>(&self, state: &mut H) where H: Hasher {
         state.write(&[*self as u8])
@@ -88,6 +101,13 @@ impl hash32::Hash for TransferType {
 pub enum Direction {
     Out,
     In,
+}
+
+pub type ConfigNum = u8;
+pub type InterfaceNum = u8;
+
+pub trait MaxPacketSize {
+    fn max_packet_size(&self) -> u16;
 }
 
 fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(map: &mut FnvIndexMap<K, V, N>, key: K, new: F) -> Option<&mut V> {

@@ -18,15 +18,14 @@ use pck_size::PckSize;
 use status_bk::StatusBk;
 use status_pipe::StatusPipe;
 
-use crate::{Endpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, WValue};
+use crate::{HostEndpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, UsbError, WValue};
 
 use atsamd_hal::target_device::usb::{
     self,
     host::{BINTERVAL, PCFG, PINTFLAG, PSTATUS, PSTATUSCLR, PSTATUSSET},
 };
 
-// Maximum time to wait for a control request with data to finish. cf
-// §9.2.6.1 of USB 2.0.
+// Maximum time to wait for a control request with data to finish. cf §9.2.6.1 of USB 2.0.
 const USB_TIMEOUT: u64 = 5000; // 5 Seconds
 
 // samd21 only supports 8 pipes.
@@ -42,14 +41,35 @@ pub(crate) enum PipeErr {
     ShortPacket,
     InvalidPipe,
     InvalidToken,
+    InvalidRequest,
     Stall,
     TransferFail,
     PipeErr,
     Flow,
-    HWTimeout,
+    HardwareTimeout,
     DataToggle,
-    SWTimeout,
+    SoftwareTimeout,
     Other(&'static str),
+}
+
+impl From<PipeErr> for UsbError {
+    fn from(v: PipeErr) -> Self {
+        match v {
+            PipeErr::TransferFail => Self::Transient("Transfer failed"),
+            PipeErr::Flow => Self::Transient("Data flow"),
+            PipeErr::DataToggle => Self::Transient("Data toggle"),
+
+            PipeErr::ShortPacket => Self::Permanent("Short packet"),
+            PipeErr::InvalidPipe => Self::Permanent("Invalid pipe"),
+            PipeErr::InvalidToken => Self::Permanent("Invalid token"),
+            PipeErr::Stall => Self::Permanent("Stall"),
+            PipeErr::PipeErr => Self::Permanent("Pipe error"),
+            PipeErr::HardwareTimeout => Self::Permanent("Hardware timeout"),
+            PipeErr::SoftwareTimeout => Self::Permanent("Software timeout"),
+            PipeErr::Other(s) => Self::Permanent(s),
+            PipeErr::InvalidRequest => Self::Permanent("Invalid request"),
+        }
+    }
 }
 
 impl From<&'static str> for PipeErr {
@@ -80,7 +100,7 @@ impl PipeTable {
     pub(crate) fn pipe_for<'a, 'b>(
         &'a mut self,
         host: &'b mut usb::HOST,
-        endpoint: &dyn Endpoint,
+        endpoint: &dyn HostEndpoint,
     ) -> Pipe<'a, 'b> {
         // Just use two pipes for now. 0 is always for control
         // endpoints, 1 for everything else.
@@ -137,7 +157,7 @@ impl Pipe<'_, '_> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_transfer(
         &mut self,
-        ep: &mut dyn Endpoint,
+        ep: &mut dyn HostEndpoint,
         bm_request_type: RequestType,
         b_request: RequestCode,
         w_value: WValue,
@@ -155,18 +175,16 @@ impl Pipe<'_, '_> {
         };
         self.send(ep, PToken::Setup, &DataBuf::from(&mut setup_packet), NAK_LIMIT, after_millis)?;
 
+        let direction = bm_request_type.direction().ok_or(PipeErr::InvalidRequest)?;
         let mut transfer_len = 0;
-        if let Some(b) = buf {
+
+        if let Some(buf) = buf {
             // TODO: data stage, has up to 5,000ms (in 500ms
             // per-packet chunks) to complete. cf §9.2.6.4 of USB 2.0.
-            match bm_request_type.direction()? {
-                RequestDirection::DeviceToHost => {
-                    transfer_len = self.in_transfer(ep, b, NAK_LIMIT, after_millis)?;
-                }
 
-                RequestDirection::HostToDevice => {
-                    transfer_len = self.out_transfer(ep, b, NAK_LIMIT, after_millis)?;
-                }
+            transfer_len = match direction {
+                RequestDirection::DeviceToHost => self.in_transfer(ep, buf, NAK_LIMIT, after_millis)?,
+                RequestDirection::HostToDevice => self.out_transfer(ep, buf, NAK_LIMIT, after_millis)?
             }
         }
 
@@ -176,7 +194,7 @@ impl Pipe<'_, '_> {
             unsafe { w.multi_packet_size().bits(0) }
         });
 
-        let token = match bm_request_type.direction()? {
+        let token = match direction {
             RequestDirection::DeviceToHost => PToken::Out,
             RequestDirection::HostToDevice => PToken::In,
         };
@@ -186,7 +204,7 @@ impl Pipe<'_, '_> {
         Ok(transfer_len)
     }
 
-    fn send(&mut self, ep: &mut dyn Endpoint, token: PToken, buf: &DataBuf, nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<(), PipeErr> {
+    fn send(&mut self, ep: &mut dyn HostEndpoint, token: PToken, buf: &DataBuf, nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<(), PipeErr> {
         self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.ptr as u32) });
         // configure packet size PCKSIZE.SIZE
         self.desc.bank0.pcksize.modify(|_, w| {
@@ -197,7 +215,7 @@ impl Pipe<'_, '_> {
         self.dispatch_retries(ep, token, nak_limit, after_millis)
     }
 
-    pub fn in_transfer(&mut self, ep: &mut dyn Endpoint, buf: &mut [u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
+    pub fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
         // TODO: pull this from pipe descriptor for this addr/ep.
         let packet_size = 8;
 
@@ -245,7 +263,7 @@ impl Pipe<'_, '_> {
         }
     }
 
-    pub fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
+    pub fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
         self.desc.bank0.pcksize.modify(|_, w| {
             unsafe { w.byte_count().bits(buf.len() as u16) };
             unsafe { w.multi_packet_size().bits(0) }
@@ -267,19 +285,7 @@ impl Pipe<'_, '_> {
         Ok(bytes_sent)
     }
 
-    fn dtgl(&mut self, ep: &mut dyn Endpoint, token: PToken) {
-        // TODO: this makes no sense to me, and docs are unclear. If
-        // the status bit is set, set it again? if it's clear then
-        // clear it? This is what I get for having to work from
-        // Arduino sources.
-        warn!(
-            "tok: {:?}, dtgl: {}, i: {}, o: {}",
-            token,
-            self.regs.status.read().dtgl().bit(),
-            ep.in_toggle(),
-            ep.out_toggle(),
-        );
-
+    fn data_toggle(&mut self, ep: &mut dyn HostEndpoint, token: PToken) {
         let toggle = match token {
             PToken::In => {
                 let t = !ep.in_toggle();
@@ -311,9 +317,6 @@ impl Pipe<'_, '_> {
 
     fn dtgl_clear(&mut self) {
         self.regs.statusclr.write(|w| unsafe {
-            // FIXME: need to patch the SVD for
-            // PSTATUSCLR.DTGL at bit0. No? This is in the SVD, but
-            // not the rust output.
             w.bits(1)
         });
     }
@@ -323,7 +326,7 @@ impl Pipe<'_, '_> {
     // non-blocking.
     fn dispatch_retries(
         &mut self,
-        ep: &mut dyn Endpoint,
+        ep: &mut dyn HostEndpoint,
         token: PToken,
         retries: usize,
         after_millis: fn(u64) -> u64,
@@ -335,7 +338,7 @@ impl Pipe<'_, '_> {
         let mut naks = 0;
         loop {
             if after_millis(0) > until {
-                return Err(PipeErr::SWTimeout)
+                return Err(PipeErr::SoftwareTimeout);
             }
 
             let res = self.dispatch_result(token);
@@ -353,7 +356,7 @@ impl Pipe<'_, '_> {
 
                 Err(err) => {
                     match err {
-                        PipeErr::DataToggle => self.dtgl(ep, token),
+                        PipeErr::DataToggle => self.data_toggle(ep, token),
 
                         // Flow error on interrupt pipes means we got a NAK = no data
                         PipeErr::Flow if ep.transfer_type() == TransferType::Interrupt => return Err(PipeErr::Flow),
@@ -372,7 +375,7 @@ impl Pipe<'_, '_> {
         }
     }
 
-    fn dispatch_packet(&mut self, ep: &mut dyn Endpoint, token: PToken) {
+    fn dispatch_packet(&mut self, ep: &mut dyn HostEndpoint, token: PToken) {
         self.regs
             .cfg
             .modify(|_, w| unsafe { w.ptoken().bits(token as u8) });
@@ -420,7 +423,7 @@ impl Pipe<'_, '_> {
         } else if self.desc.bank0.status_bk.read().errorflow().bit_is_set() {
             Err(PipeErr::Flow)
         } else if self.desc.bank0.status_pipe.read().touter().bit_is_set() {
-            Err(PipeErr::HWTimeout)
+            Err(PipeErr::HardwareTimeout)
         } else if self.desc.bank0.status_pipe.read().dtgler().bit_is_set() {
             Err(PipeErr::DataToggle)
         } else if self.regs.intflag.read().trfail().bit_is_set() {

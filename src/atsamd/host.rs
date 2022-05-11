@@ -1,6 +1,6 @@
 use crate::atsamd::pipe::{PipeErr, PipeTable};
 
-use crate::{AddressPool, Endpoint, HostEvent, RequestCode, RequestType, stack, UsbError, UsbHost, WValue};
+use crate::{AddressPool, HostEndpoint, HostEvent, RequestCode, RequestType, stack, UsbError, UsbHost, WValue};
 
 use atsamd_hal::{
     calibration::{usb_transn_cal, usb_transp_cal, usb_trim_cal},
@@ -177,31 +177,9 @@ impl HostController {
     }
 }
 
-impl From<PipeErr> for UsbError {
-    fn from(v: PipeErr) -> Self {
-        match v {
-            PipeErr::TransferFail => Self::Transient("Transfer failed"),
-            PipeErr::Flow => Self::Transient("Data flow"),
-            PipeErr::DataToggle => Self::Transient("Data toggle"),
-            PipeErr::ShortPacket => Self::Permanent("Short packet"),
-            PipeErr::InvalidPipe => Self::Permanent("Invalid pipe"),
-            PipeErr::InvalidToken => Self::Permanent("Invalid token"),
-            PipeErr::Stall => Self::Permanent("Stall"),
-            PipeErr::PipeErr => Self::Permanent("Pipe error"),
-            PipeErr::HWTimeout => Self::Permanent("Hardware timeout"),
-            PipeErr::SWTimeout => Self::Permanent("Software timeout"),
-            PipeErr::Other(s) => Self::Permanent(s),
-        }
-    }
-}
+
 
 impl UsbHost for HostController {
-    fn max_host_packet_size(&self) -> u16 {
-        match self.usb.host().status.read().speed().bits() {
-            0x0 => 64,
-            _ => 8,
-        }
-    }
 
     fn update(&mut self) -> Option<HostEvent> {
         let prev_state = self.state;
@@ -239,7 +217,18 @@ impl UsbHost for HostController {
         host_event
     }
 
-    fn control_transfer(&mut self, ep: &mut dyn Endpoint, bm_request_type: RequestType,
+    fn max_host_packet_size(&self) -> u16 {
+        match self.usb.host().status.read().speed().bits() {
+            0x0 => 64,
+            _ => 8,
+        }
+    }
+
+    fn after_millis(&self, ms: u64) -> u64 {
+        (self.after_millis)(ms)
+    }
+
+    fn control_transfer(&mut self, ep: &mut dyn HostEndpoint, bm_request_type: RequestType,
                         b_request: RequestCode, w_value: WValue, w_index: u16, buf: Option<&mut [u8]>,
     ) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
@@ -247,19 +236,15 @@ impl UsbHost for HostController {
         Ok(len)
     }
 
-    fn in_transfer(&mut self, ep: &mut dyn Endpoint, buf: &mut [u8]) -> Result<usize, UsbError> {
+    fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8]) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
         let len = pipe.in_transfer(ep, buf, NAK_LIMIT, self.after_millis)?;
         Ok(len)
     }
 
-    fn out_transfer(&mut self, ep: &mut dyn Endpoint, buf: &[u8]) -> Result<usize, UsbError> {
+    fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8]) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
         let len = pipe.out_transfer(ep, buf, NAK_LIMIT, self.after_millis)?;
         Ok(len)
-    }
-
-    fn after_millis(&self, ms: u64) -> u64 {
-        (self.after_millis)(ms)
     }
 }
