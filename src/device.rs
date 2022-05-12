@@ -1,6 +1,4 @@
-use core::mem;
-
-use crate::{ConfigurationDescriptor, ControlEndpoint, DescriptorType, DeviceDescriptor, HostEndpoint, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, UsbError, UsbHost, WValue, DescriptorParser, ConfigNum, EpAddress, TransferType, InterfaceNum, EndpointProperties, MaxPacketSize, DataToggle};
+use crate::{ConfigurationDescriptor, ControlEndpoint, DescriptorType, DeviceDescriptor, HostEndpoint, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, UsbError, UsbHost, WValue, DescriptorParser, ConfigNum, EpAddress, TransferType, InterfaceNum, EndpointProperties, MaxPacketSize, DataToggle, to_slice_mut};
 use crate::address::{DevAddress};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -12,11 +10,10 @@ pub enum DeviceState {
     /// Device needs a configuration to be selected
     SetConfig(u64),
 
-    /// Device needs an interface to be selected (maybe)
-    SetInterface(InterfaceNum, u64),
-
     /// HID
-    SetProtocol(InterfaceNum),
+    /// Device needs an interface to be selected (maybe)
+    SetProtocol(InterfaceNum, u64),
+
     /// HID
     SetReport(InterfaceNum),
     /// HID
@@ -111,7 +108,7 @@ impl Device {
         self.control_set(host, RequestCode::SetConfiguration, RequestRecipient::Device, config_num, 0, 0)
     }
 
-    pub fn set_interface(&mut self, host: &mut dyn UsbHost, iface_num: u8, _alt_num: u8) -> Result<(), UsbError> {
+    pub fn set_interface(&mut self, host: &mut dyn UsbHost, iface_num: u8, protocol: u8) -> Result<(), UsbError> {
         host.control_transfer(
             self,
             RequestType::from((
@@ -120,7 +117,7 @@ impl Device {
                 RequestRecipient::Interface,
             )),
             RequestCode::SetInterface,
-            WValue::from((0, 0)),
+            WValue::lo_hi(protocol, 0),
             u16::from(iface_num),
             None,
         )?;
@@ -175,7 +172,7 @@ impl ControlEndpoint for Device {
             self,
             RequestType::from((RequestDirection::DeviceToHost, RequestKind::Standard, RequestRecipient::Device)),
             RequestCode::GetDescriptor,
-            WValue::from((desc_index, desc_type as u8)),
+            WValue::lo_hi(desc_index, desc_type as u8),
             0,
             Some(buffer))
     }
@@ -186,7 +183,7 @@ impl ControlEndpoint for Device {
             self,
             RequestType::from((RequestDirection::HostToDevice, RequestKind::Standard, recip)),
             code,
-            WValue::from((lo_val, hi_val)),
+            WValue::lo_hi(lo_val, hi_val),
             windex,
             None)?;
         Ok(())
@@ -198,16 +195,11 @@ impl ControlEndpoint for Device {
             self,
             RequestType::from((RequestDirection::HostToDevice, RequestKind::Class, recip)),
             code,
-            WValue::from((lo_val, hi_val)),
+            WValue::lo_hi(lo_val, hi_val),
             windex,
             None)?;
         Ok(())
     }
-}
-
-fn to_slice_mut<T>(v: &mut T) -> &mut [u8] {
-    let ptr = v as *mut T as *mut u8;
-    unsafe { core::slice::from_raw_parts_mut(ptr, mem::size_of::<T>()) }
 }
 
 /// Trait for drivers on the USB host.
@@ -219,7 +211,7 @@ pub trait Driver {
     fn unregister(&mut self, device: DevAddress);
 
     /// HID drivers may overload this to return `DeviceState::SetProtocol`
-    fn next_state_after_interface_set(&self) -> DeviceState {
+    fn state_after_config_set(&self, host: &mut dyn UsbHost, device: &mut Device) -> DeviceState {
         DeviceState::Running
     }
 

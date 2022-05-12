@@ -10,44 +10,33 @@
 #[repr(C)]
 pub struct RequestType(u8);
 
+const DIRECTION_MASK: u8 = 0b10000000;
+const KIND_MASK: u8 = 0b1100000;
+const RECIPIENT_MASK: u8 = 0b0000011;
+
 impl RequestType {
     pub fn recipient(self) -> Option<RequestRecipient> {
-        const POS: u8 = 0;
-        const MASK: u8 = 0x1f;
-        RequestRecipient::from_repr(self.0 & (MASK << POS))
+        RequestRecipient::from_repr(self.0 & RECIPIENT_MASK)
     }
 
     pub fn set_recipient(&mut self, v: RequestRecipient) {
-        const POS: u8 = 0;
-        const MASK: u8 = 0x1f;
-        self.0 &= !(MASK << POS);
-        self.0 |= v as u8 & MASK;
+        self.0 |= v as u8 & RECIPIENT_MASK;
     }
 
     pub fn kind(self) -> Option<RequestKind> {
-        const POS: u8 = 5;
-        const MASK: u8 = 0x3;
-        RequestKind::from_repr(self.0 & (MASK << POS))
+        RequestKind::from_repr(self.0 & KIND_MASK)
     }
 
     pub fn set_kind(&mut self, v: RequestKind) {
-        const POS: u8 = 5;
-        const MASK: u8 = 0x3;
-        self.0 &= !(MASK << POS);
-        self.0 |= v as u8 & MASK;
+        self.0 |= v as u8 & KIND_MASK;
     }
 
     pub fn direction(self) -> Option<RequestDirection> {
-        const POS: u8 = 7;
-        const MASK: u8 = 0x1;
-        RequestDirection::from_repr(self.0 & (MASK << POS))
+        RequestDirection::from_repr(self.0 & DIRECTION_MASK)
     }
 
     pub fn set_direction(&mut self, v: RequestDirection) {
-        const POS: u8 = 7;
-        const MASK: u8 = 0x1;
-        self.0 &= !(MASK << POS);
-        self.0 |= v as u8 & MASK;
+        self.0 |= v as u8 & DIRECTION_MASK;
     }
 }
 
@@ -84,7 +73,12 @@ pub enum RequestRecipient {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct WValue(u16);
+
 impl WValue {
+    pub fn lo_hi(lo: u8, hi: u8) -> Self {
+        Self(((hi as u16) << 8) + lo as u16)
+    }
+
     pub fn w_value_lo(self) -> u8 {
         const POS: u8 = 0;
         const MASK: u16 = 0xff;
@@ -111,16 +105,18 @@ impl WValue {
         self.0 |= u16::from(v & MASK) << POS;
     }
 }
-impl From<(u8, u8)> for WValue {
-    fn from(v: (u8, u8)) -> Self {
-        let mut rc = Self(0);
-        rc.set_w_value_lo(v.0);
-        rc.set_w_value_hi(v.1);
-        rc
-    }
-}
+
+// impl From<(u8, u8)> for WValue {
+//     fn from(v: (u8, u8)) -> Self {
+//         let mut rc = Self(0);
+//         rc.set_w_value_lo(v.0);
+//         rc.set_w_value_hi(v.1);
+//         rc
+//     }
+// }
 
 #[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[repr(u8)]
 pub enum RequestCode {
     GetStatus = 0,
     ClearFeature = 1,
@@ -133,7 +129,6 @@ pub enum RequestCode {
     GetInterface = 10,
     SetInterface = 11,
     SynchFrame = 12,
-
 }
 
 impl Default for RequestCode {

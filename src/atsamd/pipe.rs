@@ -204,6 +204,13 @@ impl Pipe<'_, '_> {
         Ok(transfer_len)
     }
 
+    // fn bank0_size(&mut self, len: u16) {
+    //     self.desc.bank0.pcksize.modify(|_, w| {
+    //         unsafe { w.byte_count().bits(len) };
+    //         unsafe { w.multi_packet_size().bits(0) }
+    //     });
+    // }
+
     fn send(&mut self, ep: &mut dyn HostEndpoint, token: PToken, buf: &DataBuf, nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<(), PipeErr> {
         self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.ptr as u32) });
         // configure packet size PCKSIZE.SIZE

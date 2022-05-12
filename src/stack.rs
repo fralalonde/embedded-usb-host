@@ -70,10 +70,7 @@ impl<H: UsbHost> UsbStack<H> {
             return Ok(());
         }
 
-        let driver = dev_drv.1.map(|idx| self.drivers[idx as usize].borrow_mut());
-
-        let state = dev_drv.0.state();
-        match state {
+        match dev_drv.0.state() {
             DeviceState::SetAddress => {
                 info!("Device init");
                 let _dev_desc = self.address_dev(host, &mut dev_drv.0)?;
@@ -82,26 +79,18 @@ impl<H: UsbHost> UsbStack<H> {
             }
 
             DeviceState::SetConfig(until) => if host.delay_done(until) {
-                if let Some((match_idx, iface)) = self.configure_dev(host, &mut dev_drv.0)? {
+                let idx_iface = self.configure_dev(host, &mut dev_drv.0)?;
+                if let Some((match_idx, iface)) = idx_iface {
                     dev_drv.1 = Some(match_idx);
-                    dev_drv.0.set_state(DeviceState::SetInterface(iface, host.after_millis(10)));
+                    let driver = dev_drv.1.map(|idx| self.drivers[idx as usize].borrow_mut());
+                    if let Some(mut driver) = driver {
+                        let next_state = driver.state_after_config_set(host, &mut dev_drv.0);
+                        dev_drv.0.set_state(next_state);
+                    } else {
+                        return Err(UsbError::NoDriver);
+                    }
                 } else {
                     dev_drv.0.set_state(DeviceState::Orphan);
-                }
-            }
-
-            DeviceState::SetInterface(iface, until) => if host.delay_done(until) {
-                // TODO let driver handle set interface?
-                if let Err(err) = dev_drv.0.set_interface(host, iface, iface) {
-                    info!("USB Set Interface failed")
-                } else {
-                    info!("USB Set Interface WORKED")
-                }
-                // TODO handle class states e.g. HID set_report, etc.
-                if let Some(mut driver) = driver {
-                    dev_drv.0.set_state(driver.next_state_after_interface_set());
-                } else {
-                    return Err(UsbError::NoDriver);
                 }
             }
 
@@ -109,6 +98,7 @@ impl<H: UsbHost> UsbStack<H> {
 
             // Other state is handled by driver
             _ => {
+                let driver = dev_drv.1.map(|idx| self.drivers[idx as usize].borrow_mut());
                 if let Some(mut driver) = driver {
                     driver.run(host, &mut dev_drv.0)?;
                 } else {

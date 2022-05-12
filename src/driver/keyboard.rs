@@ -1,6 +1,6 @@
 //! Simple USB host-side driver for boot protocol keyboards.
 
-use crate::{Driver, UsbError, HostEndpoint, EndpointDescriptor, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, UsbHost, WValue, DescriptorParser, Device, DeviceState, DescriptorRef, DeviceClass, ConfigNum, InterfaceNum, DevAddress, Endpoint, EndpointProperties, MaxPacketSize};
+use crate::{Driver, UsbError, HostEndpoint, EndpointDescriptor, RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, UsbHost, WValue, DescriptorParser, Device, DeviceState, DescriptorRef, DeviceClass, ConfigNum, InterfaceNum, DevAddress, Endpoint, EndpointProperties, MaxPacketSize, to_slice_mut};
 
 
 use heapless::{FnvIndexMap, Vec};
@@ -17,16 +17,32 @@ const CONFIG_BUFFER_LEN: usize = 256;
 static BOOT_KEYBOARD_PORT: Vec<u8, 16> = Vec::new();
 
 /// Boot protocol keyboard driver for USB hosts.
-pub struct BootKeyboard {
+pub struct BootKbdDriver {
     device_endpoints: FnvIndexMap<DevAddress, Endpoint, MAX_DEVICES>,
 }
 
-const HID_INTERFACE_SUBCLASS_BOOT: u8 = 0x01;
+#[repr(u8)]
+pub enum HidSubclass {
+    NoBoot = 0,
+    Boot = 1,
+}
 
-const HID_PROTOCOL_KEYBOARD : u8 = 0x01;
-const HID_PROTOCOL_MOUSE : u8 = 0x02;
+#[repr(u8)]
+pub enum HidDevice {
+    Keyboard = 1,
+    Mouse = 2,
+}
 
-impl Driver for BootKeyboard {
+#[repr(u8)]
+pub enum HidProtocol {
+    Boot = 0,
+    Report = 1,
+}
+
+const HID_PROTOCOL_KEYBOARD: u8 = 0x01;
+const HID_PROTOCOL_MOUSE: u8 = 0x02;
+
+impl Driver for BootKbdDriver {
     fn accept(&self, device: &mut Device, parser: &mut DescriptorParser) -> Option<(ConfigNum, InterfaceNum)> {
         let mut config_num = None;
         while let Some(desc) = parser.next() {
@@ -36,12 +52,12 @@ impl Driver for BootKeyboard {
                 }
                 DescriptorRef::Interface(idesc) => {
                     if idesc.b_interface_class == DeviceClass::Hid as u8
-                        && idesc.b_interface_sub_class == HID_INTERFACE_SUBCLASS_BOOT
-                        && idesc.b_interface_protocol == HID_PROTOCOL_KEYBOARD
+                        && idesc.b_interface_sub_class == HidSubclass::Boot as u8
+                        && idesc.b_interface_protocol == HidDevice::Keyboard as u8
                     {
                         if let Some(config_num) = config_num {
                             info!("{}", idesc);
-                            return Some((config_num, idesc.b_interface_number))
+                            return Some((config_num, idesc.b_interface_number));
                         }
                     }
                 }
@@ -68,29 +84,19 @@ impl Driver for BootKeyboard {
         self.device_endpoints.remove(&address);
     }
 
-    fn next_state_after_interface_set(&self) -> DeviceState {
-        // TODO get correct protocol in here
-        DeviceState::SetProtocol(1)
+    fn state_after_config_set(&self, host: &mut dyn UsbHost, _device: &mut Device) -> DeviceState {
+        // TODO get correct interface in here
+        DeviceState::SetProtocol(0, host.after_millis(10))
     }
 
     fn run(&mut self, host: &mut dyn UsbHost, device: &mut Device) -> Result<(), UsbError> {
         for ep in self.device_endpoints.get_mut(&device.device_address()) {
             match device.state() {
-                DeviceState::SetProtocol(iface_num) => {
-                    host.control_transfer(
-                        ep,
-                        RequestType::from((
-                            RequestDirection::HostToDevice,
-                            RequestKind::Class,
-                            RequestRecipient::Interface,
-                        )),
-                        RequestCode::SetInterface,
-                        WValue::from((0, 0)),
-                        u16::from(iface_num),
-                        None,
-                    )?;
-                    device.set_state(DeviceState::SetIdle);
+                DeviceState::SetProtocol(iface, until) => if host.delay_done(until) {
+                    device.set_interface(host, iface, HidProtocol::Boot as u8)?;
+                    device.set_state(DeviceState::Running);
                 }
+
                 DeviceState::SetIdle => {
                     host.control_transfer(
                         ep,
@@ -100,12 +106,13 @@ impl Driver for BootKeyboard {
                             RequestRecipient::Interface,
                         )),
                         RequestCode::GetInterface,
-                        WValue::from((0, 0)),
+                        WValue::lo_hi(0, 0),
                         0,
                         None,
                     )?;
                     device.set_state(DeviceState::SetReport(0))
                 }
+
                 DeviceState::SetReport(iface_num) => {
                     let mut report: [u8; 1] = [0];
                     host.control_transfer(
@@ -116,17 +123,21 @@ impl Driver for BootKeyboard {
                             RequestRecipient::Interface,
                         )),
                         RequestCode::SetConfiguration,
-                        WValue::from((0, 2)),
+                        WValue::lo_hi(0, 2),
                         u16::from(iface_num),
                         Some(&mut report),
                     )?;
                     device.set_state(DeviceState::Running)
                 }
                 DeviceState::Running => {
-                    let mut buf: [u8; 8] = [0; 8];
-                    match host.in_transfer(ep, &mut buf) {
-                        Ok(size) => {
-                            info!("Got key {:X}", buf[0..size])
+                    let mut buf = 0u64;
+                    match host.in_transfer(ep, to_slice_mut(&mut buf)) {
+                        Ok(0) => {}
+                        Ok(_size) => {
+                            if buf > 0 {
+                                info!("Got keys {:x}", buf)
+                                // TODO cast to BootKbdPacket & decode
+                            }
                         }
                         Err(_) => {}
                     }
@@ -140,7 +151,15 @@ impl Driver for BootKeyboard {
     }
 }
 
-impl BootKeyboard {
+#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(defmt::Format)]
+pub struct BootKbdPacket {
+    modifiers: u8,
+    r0: u8,
+    keys: [u8; 6],
+}
+
+impl BootKbdDriver {
     pub fn new() -> Self {
         Self {
             device_endpoints: FnvIndexMap::new(),

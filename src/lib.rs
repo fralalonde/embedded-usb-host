@@ -32,6 +32,7 @@ pub mod atsamd;
 #[cfg(feature = "stm32")]
 pub mod stm32;
 
+use core::mem;
 use hash32::Hasher;
 use heapless::FnvIndexMap;
 pub use descriptor::*;
@@ -115,4 +116,9 @@ fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(m
         let _ = map.insert(key, new());
     }
     map.get_mut(&key)
+}
+
+fn to_slice_mut<T>(v: &mut T) -> &mut [u8] {
+    let ptr = v as *mut T as *mut u8;
+    unsafe { core::slice::from_raw_parts_mut(ptr, mem::size_of::<T>()) }
 }
