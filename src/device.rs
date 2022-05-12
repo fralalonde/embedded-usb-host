@@ -60,7 +60,8 @@ impl Device {
     }
 
     pub fn set_state(&mut self, state: DeviceState) {
-        self.state = state
+        self.state = state;
+        debug!("New device state {}", state)
     }
 
     pub fn error(&self) -> Option<UsbError> {

@@ -1,4 +1,4 @@
-use crate::atsamd::pipe::{PipeErr, PipeTable};
+use crate::atsamd::error::PipeErr;
 
 use crate::{AddressPool, HostEndpoint, HostEvent, RequestCode, RequestType, stack, UsbError, UsbHost, WValue};
 
@@ -9,6 +9,7 @@ use atsamd_hal::{
     target_device::{PM, USB},
 };
 use embedded_hal::digital::v2::OutputPin;
+use crate::atsamd::pipe::table::PipeTable;
 
 #[derive(Debug)]
 #[derive(defmt::Format)]
@@ -38,20 +39,6 @@ pub enum HostState {
     Error,
 }
 
-pub struct HostController {
-    usb: USB,
-    state: HostState,
-
-    // Need chunk of RAM for USB pipes, which gets used with DESCADD register.
-    pipe_table: PipeTable,
-
-    _dm_pad: gpio::Pa24<gpio::PfG>,
-    _dp_pad: gpio::Pa25<gpio::PfG>,
-    _sof_pad: Option<gpio::Pa23<gpio::PfG>>,
-    host_enable_pin: Option<gpio::Pa28<Output<OpenDrain>>>,
-    after_millis: fn(u64) -> u64,
-}
-
 pub struct HostPins {
     dm_pin: gpio::Pa24<Input<Floating>>,
     dp_pin: gpio::Pa25<Input<Floating>>,
@@ -73,6 +60,19 @@ impl HostPins {
             host_enable_pin,
         }
     }
+}
+
+pub struct HostController {
+    usb: USB,
+    state: HostState,
+
+    pipe_table: PipeTable,
+
+    _dm_pad: gpio::Pa24<gpio::PfG>,
+    _dp_pad: gpio::Pa25<gpio::PfG>,
+    _sof_pad: Option<gpio::Pa23<gpio::PfG>>,
+    host_enable_pin: Option<gpio::Pa28<Output<OpenDrain>>>,
+    after_millis: fn(u64) -> u64,
 }
 
 impl HostController {
@@ -178,9 +178,7 @@ impl HostController {
 }
 
 
-
 impl UsbHost for HostController {
-
     fn update(&mut self) -> Option<HostEvent> {
         let prev_state = self.state;
         let mut host_event = None;
@@ -238,13 +236,13 @@ impl UsbHost for HostController {
 
     fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8]) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.in_transfer(ep, buf, NAK_LIMIT, self.after_millis)?;
+        let len = pipe.in_transfer(ep, buf, self.after_millis)?;
         Ok(len)
     }
 
     fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8]) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.out_transfer(ep, buf, NAK_LIMIT, self.after_millis)?;
+        let len = pipe.out_transfer(ep, buf, self.after_millis)?;
         Ok(len)
     }
 }

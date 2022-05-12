@@ -2,6 +2,7 @@
 
 mod pipe;
 mod host;
+mod error;
 
 pub use host::*;
 

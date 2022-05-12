@@ -46,8 +46,6 @@ pub use host::*;
 pub use driver::*;
 pub use class::*;
 
-#[cfg(feature = "atsamd")]
-pub use atsamd::*;
 
 /// Errors that can be generated when attempting to do a USB transfer.
 #[derive(Debug, Clone, Copy, PartialEq)]

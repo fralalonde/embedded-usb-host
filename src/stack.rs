@@ -80,8 +80,8 @@ impl<H: UsbHost> UsbStack<H> {
 
             DeviceState::SetConfig(until) => if host.delay_done(until) {
                 let idx_iface = self.configure_dev(host, &mut dev_drv.0)?;
-                if let Some((match_idx, iface)) = idx_iface {
-                    dev_drv.1 = Some(match_idx);
+                if let Some((driver_idx, iface_num)) = idx_iface {
+                    dev_drv.1 = Some(driver_idx);
                     let driver = dev_drv.1.map(|idx| self.drivers[idx as usize].borrow_mut());
                     if let Some(mut driver) = driver {
                         let next_state = driver.state_after_config_set(host, &mut dev_drv.0);

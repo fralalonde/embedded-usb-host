@@ -1,3 +1,5 @@
+//! Use a single u128 to track USB address allocation.
+
 const MAX_DEVICES: u8 = 127;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

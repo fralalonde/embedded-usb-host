@@ -10,6 +10,10 @@ pub mod pck_size;
 pub mod status_bk;
 #[allow(unused)]
 pub mod status_pipe;
+#[allow(unused)]
+pub mod regs;
+#[allow(unused)]
+pub mod table;
 
 use addr::Addr;
 use ctrl_pipe::CtrlPipe;
@@ -18,12 +22,11 @@ use pck_size::PckSize;
 use status_bk::StatusBk;
 use status_pipe::StatusPipe;
 
-use crate::{HostEndpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, UsbError, WValue};
+use crate::{HostEndpoint, RequestCode, RequestDirection, RequestType, SetupPacket, to_slice_mut, TransferType, UsbError, WValue};
+use atsamd_hal::target_device::usb;
 
-use atsamd_hal::target_device::usb::{
-    self,
-    host::{BINTERVAL, PCFG, PINTFLAG, PSTATUS, PSTATUSCLR, PSTATUSSET},
-};
+use regs::PipeRegs;
+use crate::atsamd::error::PipeErr;
 
 // Maximum time to wait for a control request with data to finish. cf §9.2.6.1 of USB 2.0.
 const USB_TIMEOUT: u64 = 5000; // 5 Seconds
@@ -34,123 +37,10 @@ const MAX_PIPES: usize = 8;
 // How many times to retry a transaction that has transient errors.
 const NAK_LIMIT: usize = 15;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
-#[allow(unused)]
-pub(crate) enum PipeErr {
-    ShortPacket,
-    InvalidPipe,
-    InvalidToken,
-    InvalidRequest,
-    Stall,
-    TransferFail,
-    PipeErr,
-    Flow,
-    HardwareTimeout,
-    DataToggle,
-    SoftwareTimeout,
-    Other(&'static str),
-}
-
-impl From<PipeErr> for UsbError {
-    fn from(v: PipeErr) -> Self {
-        match v {
-            PipeErr::TransferFail => Self::Transient("Transfer failed"),
-            PipeErr::Flow => Self::Transient("Data flow"),
-            PipeErr::DataToggle => Self::Transient("Data toggle"),
-
-            PipeErr::ShortPacket => Self::Permanent("Short packet"),
-            PipeErr::InvalidPipe => Self::Permanent("Invalid pipe"),
-            PipeErr::InvalidToken => Self::Permanent("Invalid token"),
-            PipeErr::Stall => Self::Permanent("Stall"),
-            PipeErr::PipeErr => Self::Permanent("Pipe error"),
-            PipeErr::HardwareTimeout => Self::Permanent("Hardware timeout"),
-            PipeErr::SoftwareTimeout => Self::Permanent("Software timeout"),
-            PipeErr::Other(s) => Self::Permanent(s),
-            PipeErr::InvalidRequest => Self::Permanent("Invalid request"),
-        }
-    }
-}
-
-impl From<&'static str> for PipeErr {
-    fn from(v: &'static str) -> Self {
-        Self::Other(v)
-    }
-}
-
-pub(crate) struct PipeTable {
-    tbl: [PipeDesc; MAX_PIPES],
-}
-
-impl PipeTable {
-    pub(crate) fn new() -> Self {
-        let tbl = {
-            let mut tbl: [core::mem::MaybeUninit<PipeDesc>; MAX_PIPES] =
-                unsafe { core::mem::MaybeUninit::uninit().assume_init() };
-
-            for e in &mut tbl[..] {
-                unsafe { core::ptr::write(e.as_mut_ptr(), PipeDesc::new()) }
-            }
-
-            unsafe { core::mem::transmute(tbl) }
-        };
-        Self { tbl }
-    }
-
-    pub(crate) fn pipe_for<'a, 'b>(
-        &'a mut self,
-        host: &'b mut usb::HOST,
-        endpoint: &dyn HostEndpoint,
-    ) -> Pipe<'a, 'b> {
-        // Just use two pipes for now. 0 is always for control
-        // endpoints, 1 for everything else.
-        //
-        // TODO: cache in-use pipes and return them without init if possible.
-        let i = if endpoint.endpoint_address().absolute() == 0 { 0 } else { 1 };
-
-        let pregs = PipeRegs::from(host, i);
-        let pdesc = &mut self.tbl[i];
-
-        pregs.cfg.write(|w| {
-            let ptype = PType::from(endpoint.transfer_type()) as u8;
-            unsafe { w.ptype().bits(ptype) }
-        });
-
-        pdesc.bank0.ctrl_pipe.write(|w| {
-            w.pdaddr().set_addr(endpoint.device_address().into());
-            w.pepnum().set_epnum(endpoint.endpoint_address().into())
-        });
-        pdesc.bank0.pcksize.write(|w| {
-            let mps = endpoint.max_packet_size();
-            if mps >= 1023 {
-                w.size().bytes1024()
-            } else if mps >= 512 {
-                w.size().bytes512()
-            } else if mps >= 256 {
-                w.size().bytes256()
-            } else if mps >= 128 {
-                w.size().bytes128()
-            } else if mps >= 64 {
-                w.size().bytes64()
-            } else if mps >= 32 {
-                w.size().bytes32()
-            } else if mps >= 16 {
-                w.size().bytes16()
-            } else {
-                w.size().bytes8()
-            }
-        });
-        Pipe {
-            regs: pregs,
-            desc: pdesc,
-        }
-    }
-}
-
 // TODO: hide regs/desc fields. Needed right now for init_pipe0.
 pub(crate) struct Pipe<'a, 'b> {
-    pub(crate) regs: PipeRegs<'b>,
-    pub(crate) desc: &'a mut PipeDesc,
+    regs: PipeRegs<'b>,
+    desc: &'a mut PipeDesc,
 }
 
 impl Pipe<'_, '_> {
@@ -163,79 +53,52 @@ impl Pipe<'_, '_> {
         w_value: WValue,
         w_index: u16,
         buf: Option<&mut [u8]>,
-        after_millis: fn(u64) -> u64,
-    ) -> Result<usize, PipeErr> {
+        after_millis: fn(u64) -> u64) -> Result<usize, PipeErr>
+    {
         let buflen = buf.as_ref().map_or(0, |b| b.len() as u16);
-        let mut setup_packet = SetupPacket {
-            bm_request_type,
-            b_request,
-            w_value,
-            w_index,
-            w_length: buflen,
-        };
-        self.send(ep, PToken::Setup, &DataBuf::from(&mut setup_packet), NAK_LIMIT, after_millis)?;
+        let mut setup_packet = SetupPacket { bm_request_type, b_request, w_value, w_index, w_length: buflen };
+        self.send(ep, PipeToken::Setup, to_slice_mut(&mut setup_packet), after_millis)?;
 
         let direction = bm_request_type.direction().ok_or(PipeErr::InvalidRequest)?;
         let mut transfer_len = 0;
 
         if let Some(buf) = buf {
-            // TODO: data stage, has up to 5,000ms (in 500ms
-            // per-packet chunks) to complete. cf §9.2.6.4 of USB 2.0.
-
             transfer_len = match direction {
-                RequestDirection::DeviceToHost => self.in_transfer(ep, buf, NAK_LIMIT, after_millis)?,
-                RequestDirection::HostToDevice => self.out_transfer(ep, buf, NAK_LIMIT, after_millis)?
+                RequestDirection::DeviceToHost => self.in_transfer(ep, buf, after_millis)?,
+                RequestDirection::HostToDevice => self.out_transfer(ep, buf, after_millis)?
             }
         }
 
-        // TODO: status stage has up to 50ms to complete. cf §9.2.6.4 of USB 2.0.
-        self.desc.bank0.pcksize.modify(|_, w| {
-            unsafe { w.byte_count().bits(0) };
-            unsafe { w.multi_packet_size().bits(0) }
-        });
+        self.bank0_size(0);
 
         let token = match direction {
-            RequestDirection::DeviceToHost => PToken::Out,
-            RequestDirection::HostToDevice => PToken::In,
+            RequestDirection::DeviceToHost => PipeToken::Out,
+            RequestDirection::HostToDevice => PipeToken::In,
         };
 
-        self.dispatch_retries(ep, token, NAK_LIMIT, after_millis)?;
+        self.sync_tx(ep, token, after_millis)?;
 
         Ok(transfer_len)
     }
 
-    // fn bank0_size(&mut self, len: u16) {
-    //     self.desc.bank0.pcksize.modify(|_, w| {
-    //         unsafe { w.byte_count().bits(len) };
-    //         unsafe { w.multi_packet_size().bits(0) }
-    //     });
-    // }
-
-    fn send(&mut self, ep: &mut dyn HostEndpoint, token: PToken, buf: &DataBuf, nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<(), PipeErr> {
-        self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.ptr as u32) });
-        // configure packet size PCKSIZE.SIZE
+    fn bank0_size(&mut self, len: usize) {
         self.desc.bank0.pcksize.modify(|_, w| {
-            unsafe { w.byte_count().bits(buf.len as u16) };
+            unsafe { w.byte_count().bits(len as u16) };
             unsafe { w.multi_packet_size().bits(0) }
         });
-
-        self.dispatch_retries(ep, token, nak_limit, after_millis)
     }
 
-    pub fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
+    fn send(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken, buf: &mut [u8], after_millis: fn(u64) -> u64) -> Result<(), PipeErr> {
+        self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32) });
+        self.bank0_size(buf.len());
+        self.sync_tx(ep, token, after_millis)
+    }
+
+    pub fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8], after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
         // TODO: pull this from pipe descriptor for this addr/ep.
         let packet_size = 8;
+        self.bank0_size(buf.len());
 
-        self.desc.bank0.pcksize.modify(|_, w| {
-            unsafe { w.byte_count().bits(buf.len() as u16) };
-            unsafe { w.multi_packet_size().bits(0) }
-        });
-
-        // Read until we get a short packet (indicating that there's
-        // nothing left for us in this transaction) or the buffer is full.
-        //
-        // TODO: It is sometimes valid to get a short packet when
-        // variable length data is desired by the driver. cf §5.3.2 of USB 2.0.
         let mut bytes_received = 0;
         while bytes_received < buf.len() {
             // Move the buffer pointer forward as we get data.
@@ -245,7 +108,7 @@ impl Pipe<'_, '_> {
             });
             self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
 
-            self.dispatch_retries(ep, PToken::In, nak_limit, after_millis)?;
+            self.sync_tx(ep, PipeToken::In,  after_millis)?;
             let recvd = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
             bytes_received += recvd;
             if recvd < packet_size {
@@ -258,23 +121,14 @@ impl Pipe<'_, '_> {
 
         self.regs.statusset.write(|w| w.pfreeze().set_bit());
         if bytes_received < buf.len() {
-            // TODO: honestly, this is probably a panic condition,
-            // since whatever's in DataBuf.ptr is totally
-            // invalid. Alternately, this function should be declared
-            // `unsafe`. OR! Make the function take a mutable slice of
-            // u8, and leave it up to the caller to figure out how to
-            // deal with short packets.
             Err(PipeErr::ShortPacket)
         } else {
             Ok(bytes_received)
         }
     }
 
-    pub fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8], nak_limit: usize, after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
-        self.desc.bank0.pcksize.modify(|_, w| {
-            unsafe { w.byte_count().bits(buf.len() as u16) };
-            unsafe { w.multi_packet_size().bits(0) }
-        });
+    pub fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8], after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
+        self.bank0_size(buf.len());
 
         let mut bytes_sent = 0;
         while bytes_sent < buf.len() {
@@ -282,7 +136,7 @@ impl Pipe<'_, '_> {
                 .bank0
                 .addr
                 .write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32 + bytes_sent as u32) });
-            self.dispatch_retries(ep, PToken::Out, nak_limit, after_millis)?;
+            self.sync_tx(ep, PipeToken::Out, after_millis)?;
 
             let sent = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
             bytes_sent += sent;
@@ -292,21 +146,21 @@ impl Pipe<'_, '_> {
         Ok(bytes_sent)
     }
 
-    fn data_toggle(&mut self, ep: &mut dyn HostEndpoint, token: PToken) {
+    fn data_toggle(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken) {
         let toggle = match token {
-            PToken::In => {
+            PipeToken::In => {
                 let t = !ep.in_toggle();
                 ep.set_in_toggle(t);
                 t
             }
 
-            PToken::Out => {
+            PipeToken::Out => {
                 let t = !ep.out_toggle();
                 ep.set_out_toggle(t);
                 t
             }
 
-            PToken::Setup => false,
+            PipeToken::Setup => false,
 
             _ => !self.regs.status.read().dtgl().bit_is_set(),
         };
@@ -331,11 +185,10 @@ impl Pipe<'_, '_> {
     // This is the only function that calls `millis`. If we can make
     // this just take the current timestamp, we can make this
     // non-blocking.
-    fn dispatch_retries(
+    fn sync_tx(
         &mut self,
         ep: &mut dyn HostEndpoint,
-        token: PToken,
-        retries: usize,
+        token: PipeToken,
         after_millis: fn(u64) -> u64,
     ) -> Result<(), PipeErr> {
         self.dispatch_packet(ep, token);
@@ -352,9 +205,9 @@ impl Pipe<'_, '_> {
             match res {
                 Ok(true) => {
                     // Swap sequence bits on successful transfer.
-                    if token == PToken::In {
+                    if token == PipeToken::In {
                         ep.set_in_toggle(!ep.in_toggle());
-                    } else if token == PToken::Out {
+                    } else if token == PipeToken::Out {
                         ep.set_out_toggle(!ep.out_toggle());
                     }
                     return Ok(());
@@ -372,7 +225,7 @@ impl Pipe<'_, '_> {
 
                         _any => {
                             naks += 1;
-                            if naks > retries {
+                            if naks > NAK_LIMIT {
                                 return Err(err);
                             }
                         }
@@ -382,7 +235,7 @@ impl Pipe<'_, '_> {
         }
     }
 
-    fn dispatch_packet(&mut self, ep: &mut dyn HostEndpoint, token: PToken) {
+    fn dispatch_packet(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken) {
         self.regs
             .cfg
             .modify(|_, w| unsafe { w.ptoken().bits(token as u8) });
@@ -390,7 +243,7 @@ impl Pipe<'_, '_> {
         self.regs.intflag.modify(|_, w| w.perr().set_bit());
 
         match token {
-            PToken::Setup => {
+            PipeToken::Setup => {
                 self.regs.intflag.write(|w| w.txstp().set_bit());
                 self.regs.statusset.write(|w| w.bk0rdy().set_bit());
 
@@ -400,7 +253,7 @@ impl Pipe<'_, '_> {
                 ep.set_in_toggle(true);
                 ep.set_out_toggle(true);
             }
-            PToken::In => {
+            PipeToken::In => {
                 self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
                 if ep.in_toggle() {
                     self.dtgl_set();
@@ -408,7 +261,7 @@ impl Pipe<'_, '_> {
                     self.dtgl_clear();
                 }
             }
-            PToken::Out => {
+            PipeToken::Out => {
                 self.regs.intflag.write(|w| w.trcpt0().set_bit());
                 self.regs.statusset.write(|w| w.bk0rdy().set_bit());
                 if ep.out_toggle() {
@@ -423,7 +276,7 @@ impl Pipe<'_, '_> {
         self.regs.statusclr.write(|w| w.pfreeze().set_bit());
     }
 
-    fn dispatch_result(&mut self, token: PToken) -> Result<bool, PipeErr> {
+    fn dispatch_result(&mut self, token: PipeToken) -> Result<bool, PipeErr> {
         if self.is_transfer_complete(token)? {
             self.regs.statusset.write(|w| w.pfreeze().set_bit());
             Ok(true)
@@ -442,9 +295,9 @@ impl Pipe<'_, '_> {
         }
     }
 
-    fn is_transfer_complete(&mut self, token: PToken) -> Result<bool, PipeErr> {
+    fn is_transfer_complete(&mut self, token: PipeToken) -> Result<bool, PipeErr> {
         match token {
-            PToken::Setup => {
+            PipeToken::Setup => {
                 if self.regs.intflag.read().txstp().bit_is_set() {
                     self.regs.intflag.write(|w| w.txstp().set_bit());
                     Ok(true)
@@ -452,7 +305,7 @@ impl Pipe<'_, '_> {
                     Ok(false)
                 }
             }
-            PToken::In => {
+            PipeToken::In => {
                 if self.regs.intflag.read().trcpt0().bit_is_set() {
                     self.regs.intflag.write(|w| w.trcpt0().set_bit());
                     Ok(true)
@@ -460,7 +313,7 @@ impl Pipe<'_, '_> {
                     Ok(false)
                 }
             }
-            PToken::Out => {
+            PipeToken::Out => {
                 if self.regs.intflag.read().trcpt0().bit_is_set() {
                     self.regs.intflag.write(|w| w.trcpt0().set_bit());
                     Ok(true)
@@ -476,7 +329,7 @@ impl Pipe<'_, '_> {
 // TODO: merge into SVD for pipe cfg register.
 #[derive(Copy, Clone, Debug, PartialEq)]
 #[derive(defmt::Format)]
-pub(crate) enum PToken {
+pub(crate) enum PipeToken {
     Setup = 0x0,
     In = 0x1,
     Out = 0x2,
@@ -486,7 +339,7 @@ pub(crate) enum PToken {
 // TODO: merge into SVD for pipe cfg register.
 #[allow(unused)]
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum PType {
+pub(crate) enum PipeType {
     Disabled = 0x0,
     Control = 0x1,
     ISO = 0x2,
@@ -497,112 +350,13 @@ pub(crate) enum PType {
     _Reserved1 = 0x07,
 }
 
-impl From<TransferType> for PType {
+impl From<TransferType> for PipeType {
     fn from(v: TransferType) -> Self {
         match v {
             TransferType::Control => Self::Control,
             TransferType::Isochronous => Self::ISO,
             TransferType::Bulk => Self::Bulk,
             TransferType::Interrupt => Self::Interrupt,
-        }
-    }
-}
-
-#[derive(defmt::Format)]
-struct DataBuf<'a> {
-    ptr: *mut u8,
-    len: usize,
-    _marker: core::marker::PhantomData<&'a ()>,
-}
-
-impl<'a, T> From<&'a mut T> for DataBuf<'a> {
-    fn from(v: &'a mut T) -> Self {
-        Self {
-            ptr: v as *mut T as *mut u8,
-            len: core::mem::size_of::<T>(),
-            _marker: core::marker::PhantomData,
-        }
-    }
-}
-
-pub(crate) struct PipeRegs<'a> {
-    pub(crate) cfg: &'a mut PCFG,
-    pub(crate) binterval: &'a mut BINTERVAL,
-    pub(crate) statusclr: &'a mut PSTATUSCLR,
-    pub(crate) statusset: &'a mut PSTATUSSET,
-    pub(crate) status: &'a mut PSTATUS,
-    pub(crate) intflag: &'a mut PINTFLAG,
-}
-
-impl<'a> PipeRegs<'a> {
-    pub(crate) fn from(host: &'a mut usb::HOST, i: usize) -> PipeRegs {
-        assert!(i < MAX_PIPES);
-        match i {
-            0 => Self {
-                cfg: &mut host.pcfg0,
-                binterval: &mut host.binterval0,
-                statusclr: &mut host.pstatusclr0,
-                statusset: &mut host.pstatusset0,
-                status: &mut host.pstatus0,
-                intflag: &mut host.pintflag0,
-            },
-            1 => Self {
-                cfg: &mut host.pcfg1,
-                binterval: &mut host.binterval1,
-                statusclr: &mut host.pstatusclr1,
-                statusset: &mut host.pstatusset1,
-                status: &mut host.pstatus1,
-                intflag: &mut host.pintflag1,
-            },
-            2 => Self {
-                cfg: &mut host.pcfg2,
-                binterval: &mut host.binterval2,
-                statusclr: &mut host.pstatusclr2,
-                statusset: &mut host.pstatusset2,
-                status: &mut host.pstatus2,
-                intflag: &mut host.pintflag2,
-            },
-            3 => Self {
-                cfg: &mut host.pcfg3,
-                binterval: &mut host.binterval3,
-                statusclr: &mut host.pstatusclr3,
-                statusset: &mut host.pstatusset3,
-                status: &mut host.pstatus3,
-                intflag: &mut host.pintflag3,
-            },
-            4 => Self {
-                cfg: &mut host.pcfg4,
-                binterval: &mut host.binterval4,
-                statusclr: &mut host.pstatusclr4,
-                statusset: &mut host.pstatusset4,
-                status: &mut host.pstatus4,
-                intflag: &mut host.pintflag4,
-            },
-            5 => Self {
-                cfg: &mut host.pcfg5,
-                binterval: &mut host.binterval5,
-                statusclr: &mut host.pstatusclr5,
-                statusset: &mut host.pstatusset5,
-                status: &mut host.pstatus5,
-                intflag: &mut host.pintflag5,
-            },
-            6 => Self {
-                cfg: &mut host.pcfg6,
-                binterval: &mut host.binterval6,
-                statusclr: &mut host.pstatusclr6,
-                statusset: &mut host.pstatusset6,
-                status: &mut host.pstatus6,
-                intflag: &mut host.pintflag6,
-            },
-            7 => Self {
-                cfg: &mut host.pcfg7,
-                binterval: &mut host.binterval7,
-                statusclr: &mut host.pstatusclr7,
-                statusset: &mut host.pstatusset7,
-                status: &mut host.pstatus7,
-                intflag: &mut host.pintflag7,
-            },
-            _ => unreachable!(),
         }
     }
 }
