@@ -1,8 +1,7 @@
-//! USB Host driver implementation for SAMD* series chips.
+//! USB Host driver implementation for Atmel SAMD* chips.
 
-mod pipe;
-mod host;
 mod error;
+mod host;
+mod pipe;
 
 pub use host::*;
-

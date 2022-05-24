@@ -23,18 +23,19 @@ stm32f4xx-hal = { version = "0.13", features = ["otg-fs"], optional = true }
 
 hash32 = "0.2"
 hash32-derive = "0.1"
+static_assertions = "1.1.0"
 
 # TODO make defmt & hash32 optional
 defmt = "0.3"
 
 # TODO make USB descriptor string handling optional
-utf16string = { path = "../utf16string", default-features = false, features = ["defmt"] }
+utf16string = { git = "https://github.com/fralalonde/utf16string.git", branch = "defmt", default-features = false, features = ["defmt"] }
 
 # TODO MIDI driver required crates, make optional
 #spin = "0.9"
 spin = { path = "../spin-rs", features = ["portable_atomic"] }
-#embedded-midi = { git = "https://github.com/fralalonde/embedded-midi.git", branch = "main" }
-embedded-midi = { path = "../embedded-midi", features = ["defmt"] }
+embedded-midi = { git = "https://github.com/fralalonde/embedded-midi.git", branch = "main" }
+#embedded-midi = { path = "../embedded-midi", features = ["defmt"] }
 
 [features]
 # TODO make these crates optional
@@ -58,3 +59,4 @@ same53j = ["atsamd", "atsamd-hal/same53j"]
 same53n = ["atsamd", "atsamd-hal/same53n"]
 same54n = ["atsamd", "atsamd-hal/same54n"]
 same54p = ["atsamd", "atsamd-hal/same54p"]
+

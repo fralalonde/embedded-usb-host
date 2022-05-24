@@ -1,12 +1,37 @@
+use crate::{
+    DescriptorType, DevAddress, Direction, MaxPacketSize, RequestCode, RequestRecipient,
+    TransferType, UsbError, UsbHost,
+};
 use hash32::Hasher;
-use crate::{DevAddress, DescriptorType, Direction, RequestCode, UsbError, TransferType, UsbHost, RequestRecipient, MaxPacketSize};
 
 pub trait ControlEndpoint: HostEndpoint {
-    fn control_get_descriptor(&mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8]) -> Result<usize, UsbError>;
+    fn control_get_descriptor(
+        &mut self,
+        host: &mut dyn UsbHost,
+        desc_type: DescriptorType,
+        idx: u8,
+        buffer: &mut [u8],
+    ) -> Result<usize, UsbError>;
 
-    fn control_set(&mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, index: u16) -> Result<(), UsbError>;
+    fn control_set(
+        &mut self,
+        host: &mut dyn UsbHost,
+        code: RequestCode,
+        recip: RequestRecipient,
+        lo_val: u8,
+        hi_val: u8,
+        index: u16,
+    ) -> Result<(), UsbError>;
 
-    fn control_set_class(&mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8, windex: u16) -> Result<(), UsbError>;
+    fn control_set_class(
+        &mut self,
+        host: &mut dyn UsbHost,
+        code: RequestCode,
+        recip: RequestRecipient,
+        lo_val: u8,
+        hi_val: u8,
+        windex: u16,
+    ) -> Result<(), UsbError>;
 }
 
 pub trait BulkEndpoint {
@@ -15,8 +40,7 @@ pub trait BulkEndpoint {
     fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError>;
 }
 
-#[derive(Debug)]
-#[derive(defmt::Format)]
+#[derive(Debug, defmt::Format)]
 pub struct Endpoint {
     props: EpProps,
     max_packet_size: u16,
@@ -25,13 +49,21 @@ pub struct Endpoint {
 }
 
 impl hash32::Hash for Endpoint {
-    fn hash<H>(&self, state: &mut H) where H: Hasher {
+    fn hash<H>(&self, state: &mut H)
+    where
+        H: Hasher,
+    {
         self.props.hash(state)
     }
 }
 
 impl Endpoint {
-    pub fn from_raw(device_address: DevAddress, max_packet_size: u16, b_endpoint_address: u8, bm_attributes: u8) -> Self {
+    pub fn from_raw(
+        device_address: DevAddress,
+        max_packet_size: u16,
+        b_endpoint_address: u8,
+        bm_attributes: u8,
+    ) -> Self {
         Endpoint {
             props: EpProps {
                 device_address,
@@ -57,11 +89,8 @@ impl Endpoint {
     }
 }
 
-
 /// Read-only utility structure that captures an endpoint's static properties.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-#[derive(defmt::Format)]
-#[derive(hash32_derive::Hash32)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, defmt::Format, hash32_derive::Hash32)]
 pub struct EpProps {
     device_address: DevAddress,
     endpoint_address: EpAddress,
@@ -129,9 +158,7 @@ const ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 /// Max endpoint address is 0x7F - [0..63] + direction bit
 const ENDPOINT_ADDRESS_MASK: u8 = ENDPOINT_DIRECTION_MASK + ENDPOINT_NUMBER_MASK;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(defmt::Format)]
-#[derive(hash32_derive::Hash32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format, hash32_derive::Hash32)]
 pub struct EpAddress(u8);
 
 impl EpAddress {
@@ -139,7 +166,7 @@ impl EpAddress {
     pub fn direction(&self) -> Direction {
         match self.0 & ENDPOINT_DIRECTION_MASK {
             0 => Direction::Out,
-            _ => Direction::In
+            _ => Direction::In,
         }
     }
 

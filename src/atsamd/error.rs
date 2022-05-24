@@ -1,7 +1,6 @@
 use crate::UsbError;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 #[allow(unused)]
 pub(crate) enum PipeErr {
     ShortPacket,

@@ -1,10 +1,4 @@
-//! A collection of structures for use in setting up devices during enumeration.
-//!
-//! These types are all defined in §9.3 of the USB 2.0 specification.
-//!
-//! The structures defined herein are `repr(C)` and `repr(packed)`
-//! when necessary to ensure that they are able to be directly
-//! marshalled to the bus.
+//! Structures and constants for control transfers
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
@@ -106,15 +100,6 @@ impl WValue {
     }
 }
 
-// impl From<(u8, u8)> for WValue {
-//     fn from(v: (u8, u8)) -> Self {
-//         let mut rc = Self(0);
-//         rc.set_w_value_lo(v.0);
-//         rc.set_w_value_hi(v.1);
-//         rc
-//     }
-// }
-
 #[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
 #[repr(u8)]
 pub enum RequestCode {
@@ -147,17 +132,19 @@ pub struct SetupPacket {
     pub w_length: u16,
 }
 
+use core::mem;
+const_assert!(mem::size_of::<SetupPacket>() == 8);
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     use core::mem;
     use core::slice;
+    use crate::assert_offset;
 
     #[test]
     fn setup_packet_layout() {
-        let len = mem::size_of::<SetupPacket>();
-        assert_eq!(len, 8);
         let sp = SetupPacket {
             bm_request_type: RequestType::from((
                 RequestDirection::HostToDevice,
@@ -165,7 +152,7 @@ mod test {
                 RequestRecipient::Endpoint,
             )),
             b_request: RequestCode::GetInterface,
-            w_value: WValue::from((0xf0, 0x0d)),
+            w_value: WValue::lo_hi(0xf0, 0x0d),
             w_index: 0xadde,
             w_length: 0xefbe,
         };
@@ -176,13 +163,8 @@ mod test {
         assert_offset("w_index", &sp.w_index, base, 0x04);
         assert_offset("w_length", &sp.w_length, base, 0x06);
 
-        let got = unsafe { slice::from_raw_parts(&sp as *const _ as *const u8, len) };
-        let want = &[0x22, 0x0a, 0xf0, 0x0d, 0xde, 0xad, 0xbe, 0xef];
-        assert_eq!(got, want);
-    }
-
-    fn assert_offset<T>(name: &str, field: &T, base: usize, offset: usize) {
-        let ptr = field as *const _ as usize;
-        assert_eq!(ptr - base, offset, "{} register offset.", name);
+        let result = unsafe { slice::from_raw_parts(&sp as *const _ as *const u8, len) };
+        let expected = &[0x22, 0x0a, 0xf0, 0x0d, 0xde, 0xad, 0xbe, 0xef];
+        assert_eq!(result, expected);
     }
 }

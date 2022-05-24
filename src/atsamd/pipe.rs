@@ -7,11 +7,11 @@ pub mod ext_reg;
 #[allow(unused)]
 pub mod pck_size;
 #[allow(unused)]
+pub mod regs;
+#[allow(unused)]
 pub mod status_bk;
 #[allow(unused)]
 pub mod status_pipe;
-#[allow(unused)]
-pub mod regs;
 #[allow(unused)]
 pub mod table;
 
@@ -22,11 +22,13 @@ use pck_size::PckSize;
 use status_bk::StatusBk;
 use status_pipe::StatusPipe;
 
-use crate::{HostEndpoint, RequestCode, RequestDirection, RequestType, SetupPacket, to_slice_mut, TransferType, UsbError, WValue};
-use atsamd_hal::target_device::usb;
+use crate::{
+    to_slice_mut, HostEndpoint, RequestCode, RequestDirection, RequestType, SetupPacket,
+    TransferType, WValue,
+};
 
-use regs::PipeRegs;
 use crate::atsamd::error::PipeErr;
+use regs::PipeRegs;
 
 // Maximum time to wait for a control request with data to finish. cf §9.2.6.1 of USB 2.0.
 const USB_TIMEOUT: u64 = 5000; // 5 Seconds
@@ -53,11 +55,22 @@ impl Pipe<'_, '_> {
         w_value: WValue,
         w_index: u16,
         buf: Option<&mut [u8]>,
-        after_millis: fn(u64) -> u64) -> Result<usize, PipeErr>
-    {
+        after_millis: fn(u64) -> u64,
+    ) -> Result<usize, PipeErr> {
         let buflen = buf.as_ref().map_or(0, |b| b.len() as u16);
-        let mut setup_packet = SetupPacket { bm_request_type, b_request, w_value, w_index, w_length: buflen };
-        self.send(ep, PipeToken::Setup, to_slice_mut(&mut setup_packet), after_millis)?;
+        let mut setup_packet = SetupPacket {
+            bm_request_type,
+            b_request,
+            w_value,
+            w_index,
+            w_length: buflen,
+        };
+        self.send(
+            ep,
+            PipeToken::Setup,
+            to_slice_mut(&mut setup_packet),
+            after_millis,
+        )?;
 
         let direction = bm_request_type.direction().ok_or(PipeErr::InvalidRequest)?;
         let mut transfer_len = 0;
@@ -65,7 +78,7 @@ impl Pipe<'_, '_> {
         if let Some(buf) = buf {
             transfer_len = match direction {
                 RequestDirection::DeviceToHost => self.in_transfer(ep, buf, after_millis)?,
-                RequestDirection::HostToDevice => self.out_transfer(ep, buf, after_millis)?
+                RequestDirection::HostToDevice => self.out_transfer(ep, buf, after_millis)?,
             }
         }
 
@@ -88,13 +101,27 @@ impl Pipe<'_, '_> {
         });
     }
 
-    fn send(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken, buf: &mut [u8], after_millis: fn(u64) -> u64) -> Result<(), PipeErr> {
-        self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32) });
+    fn send(
+        &mut self,
+        ep: &mut dyn HostEndpoint,
+        token: PipeToken,
+        buf: &mut [u8],
+        after_millis: fn(u64) -> u64,
+    ) -> Result<(), PipeErr> {
+        self.desc
+            .bank0
+            .addr
+            .write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32) });
         self.bank0_size(buf.len());
         self.sync_tx(ep, token, after_millis)
     }
 
-    pub fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8], after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
+    pub fn in_transfer(
+        &mut self,
+        ep: &mut dyn HostEndpoint,
+        buf: &mut [u8],
+        after_millis: fn(u64) -> u64,
+    ) -> Result<usize, PipeErr> {
         // TODO: pull this from pipe descriptor for this addr/ep.
         let packet_size = 8;
         self.bank0_size(buf.len());
@@ -108,7 +135,7 @@ impl Pipe<'_, '_> {
             });
             self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
 
-            self.sync_tx(ep, PipeToken::In,  after_millis)?;
+            self.sync_tx(ep, PipeToken::In, after_millis)?;
             let recvd = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
             bytes_received += recvd;
             if recvd < packet_size {
@@ -127,7 +154,12 @@ impl Pipe<'_, '_> {
         }
     }
 
-    pub fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8], after_millis: fn(u64) -> u64) -> Result<usize, PipeErr> {
+    pub fn out_transfer(
+        &mut self,
+        ep: &mut dyn HostEndpoint,
+        buf: &[u8],
+        after_millis: fn(u64) -> u64,
+    ) -> Result<usize, PipeErr> {
         self.bank0_size(buf.len());
 
         let mut bytes_sent = 0;
@@ -177,9 +209,7 @@ impl Pipe<'_, '_> {
     }
 
     fn dtgl_clear(&mut self) {
-        self.regs.statusclr.write(|w| unsafe {
-            w.bits(1)
-        });
+        self.regs.statusclr.write(|w| unsafe { w.bits(1) });
     }
 
     // This is the only function that calls `millis`. If we can make
@@ -219,7 +249,9 @@ impl Pipe<'_, '_> {
                         PipeErr::DataToggle => self.data_toggle(ep, token),
 
                         // Flow error on interrupt pipes means we got a NAK = no data
-                        PipeErr::Flow if ep.transfer_type() == TransferType::Interrupt => return Err(PipeErr::Flow),
+                        PipeErr::Flow if ep.transfer_type() == TransferType::Interrupt => {
+                            return Err(PipeErr::Flow)
+                        }
 
                         PipeErr::Stall => return Err(PipeErr::Stall),
 
@@ -327,8 +359,7 @@ impl Pipe<'_, '_> {
 }
 
 // TODO: merge into SVD for pipe cfg register.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 pub(crate) enum PipeToken {
     Setup = 0x0,
     In = 0x1,
@@ -364,6 +395,8 @@ impl From<TransferType> for PipeType {
 // §32.8.7.1
 pub(crate) struct PipeDesc {
     pub bank0: BankDesc,
+    // TODO use bank1 for double buffered
+    #[allow(unused)]
     pub bank1: BankDesc,
 }
 

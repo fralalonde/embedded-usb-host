@@ -1,7 +1,6 @@
-use crate::atsamd::error::PipeErr;
+use crate::{stack, HostEndpoint, HostEvent, RequestCode, RequestType, UsbError, UsbHost, WValue};
 
-use crate::{AddressPool, HostEndpoint, HostEvent, RequestCode, RequestType, stack, UsbError, UsbHost, WValue};
-
+use crate::atsamd::pipe::table::PipeTable;
 use atsamd_hal::{
     calibration::{usb_transn_cal, usb_transp_cal, usb_trim_cal},
     clock::{ClockGenId, ClockSource, GenericClockController},
@@ -9,10 +8,8 @@ use atsamd_hal::{
     target_device::{PM, USB},
 };
 use embedded_hal::digital::v2::OutputPin;
-use crate::atsamd::pipe::table::PipeTable;
 
-#[derive(Debug)]
-#[derive(defmt::Format)]
+#[derive(Debug, defmt::Format)]
 pub enum HostIrq {
     Detached,
     Attached,
@@ -24,10 +21,7 @@ pub enum HostIrq {
     HostStartOfFrame,
 }
 
-const NAK_LIMIT: usize = 15;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Clone, Copy, Debug, PartialEq, defmt::Format)]
 pub enum HostState {
     Initialize,
     WaitForDevice,
@@ -87,7 +81,9 @@ impl HostController {
         power.apbbmask.modify(|_, w| w.usb_().set_bit());
 
         clocks.configure_gclk_divider_and_source(ClockGenId::GCLK6, 1, ClockSource::DFLL48M, false);
-        let gclk6 = clocks.get_gclk(ClockGenId::GCLK6).expect("Could not get clock 6");
+        let gclk6 = clocks
+            .get_gclk(ClockGenId::GCLK6)
+            .expect("Could not get clock 6");
         clocks.usb(&gclk6);
 
         HostController {
@@ -149,14 +145,19 @@ impl HostController {
                 w.transp().bits(usb_transp_cal());
                 w.trim().bits(usb_trim_cal())
             });
-            self.usb.host().descadd.write(|w| w.bits(&self.pipe_table as *const _ as u32));
+            self.usb
+                .host()
+                .descadd
+                .write(|w| w.bits(&self.pipe_table as *const _ as u32));
         }
 
         self.usb.host().ctrlb.modify(|_, w| w.spdconf().normal());
         self.usb.host().ctrla.modify(|_, w| w.runstdby().set_bit());
 
         if let Some(host_enable_pin) = &mut self.host_enable_pin {
-            host_enable_pin.set_high().expect("USB Reset [host enable pin]");
+            host_enable_pin
+                .set_high()
+                .expect("USB Reset [host enable pin]");
         }
 
         self.usb.host().intenset.write(|w| {
@@ -176,7 +177,6 @@ impl HostController {
         debug!("USB Host Reset");
     }
 }
-
 
 impl UsbHost for HostController {
     fn update(&mut self) -> Option<HostEvent> {
@@ -226,15 +226,33 @@ impl UsbHost for HostController {
         (self.after_millis)(ms)
     }
 
-    fn control_transfer(&mut self, ep: &mut dyn HostEndpoint, bm_request_type: RequestType,
-                        b_request: RequestCode, w_value: WValue, w_index: u16, buf: Option<&mut [u8]>,
+    fn control_transfer(
+        &mut self,
+        ep: &mut dyn HostEndpoint,
+        bm_request_type: RequestType,
+        b_request: RequestCode,
+        w_value: WValue,
+        w_index: u16,
+        buf: Option<&mut [u8]>,
     ) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.control_transfer(ep, bm_request_type, b_request, w_value, w_index, buf, self.after_millis)?;
+        let len = pipe.control_transfer(
+            ep,
+            bm_request_type,
+            b_request,
+            w_value,
+            w_index,
+            buf,
+            self.after_millis,
+        )?;
         Ok(len)
     }
 
-    fn in_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8]) -> Result<usize, UsbError> {
+    fn in_transfer(
+        &mut self,
+        ep: &mut dyn HostEndpoint,
+        buf: &mut [u8],
+    ) -> Result<usize, UsbError> {
         let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
         let len = pipe.in_transfer(ep, buf, self.after_millis)?;
         Ok(len)

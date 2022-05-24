@@ -1,5 +1,5 @@
-use crate::atsamd::pipe::{MAX_PIPES, Pipe, PipeDesc, PipeType};
 use crate::atsamd::pipe::regs::PipeRegs;
+use crate::atsamd::pipe::{Pipe, PipeDesc, PipeType, MAX_PIPES};
 use crate::{EndpointProperties, HostEndpoint, MaxPacketSize};
 use atsamd_hal::target_device::usb;
 
@@ -22,9 +22,16 @@ impl PipeTable {
         Self { tbl }
     }
 
-    pub(crate) fn pipe_for<'a, 'b>(&'a mut self, host: &'b mut usb::HOST, endpoint: &dyn HostEndpoint) -> Pipe<'a, 'b> {
-
-        let i = if endpoint.endpoint_address().absolute() == 0 { 0 } else { 1 };
+    pub(crate) fn pipe_for<'a, 'b>(
+        &'a mut self,
+        host: &'b mut usb::HOST,
+        endpoint: &dyn HostEndpoint,
+    ) -> Pipe<'a, 'b> {
+        let i = if endpoint.endpoint_address().absolute() == 0 {
+            0
+        } else {
+            1
+        };
 
         let pregs = PipeRegs::from(host, i);
         let pdesc = &mut self.tbl[i];

@@ -39,42 +39,82 @@ pub fn parse(subclass: Option<u8>, desc_type: DescriptorType, buf: &[u8]) -> Aud
             return Unknown(buf);
         }
         if let Some(subclass) = AudioSubclass::from_repr(subclass) {
-            return match desc_type  {
+            return match desc_type {
                 DescriptorType::ClassInterface => match subclass {
                     AudioSubclass::AudioControl => match ACInterfaceSubtype::from_repr(buf[2]) {
-                        Some(ACInterfaceSubtype::InterfaceHeader) => AudioDescriptorRef::ACInterfaceHeader(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(ACInterfaceSubtype::InputTerminalDescriptor) => AudioDescriptorRef::ACInputTerminal(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(ACInterfaceSubtype::OutputTerminalDescriptor) => AudioDescriptorRef::ACOutputTerminal(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(ACInterfaceSubtype::FeatureUnitDescriptor) => AudioDescriptorRef::ACFeatureUnit(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(ACInterfaceSubtype::ClockSourceDescriptor) => AudioDescriptorRef::ACClockSource(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(ACInterfaceSubtype::ClockSelectorDescriptor) => AudioDescriptorRef::ACClockSelector(unsafe { &*(buf.as_ptr() as *const _) }),
-                        _ => Unknown(buf)
-                    }
+                        Some(ACInterfaceSubtype::InterfaceHeader) => {
+                            AudioDescriptorRef::ACInterfaceHeader(unsafe {
+                                &*(buf.as_ptr() as *const _)
+                            })
+                        }
+                        Some(ACInterfaceSubtype::InputTerminalDescriptor) => {
+                            AudioDescriptorRef::ACInputTerminal(unsafe {
+                                &*(buf.as_ptr() as *const _)
+                            })
+                        }
+                        Some(ACInterfaceSubtype::OutputTerminalDescriptor) => {
+                            AudioDescriptorRef::ACOutputTerminal(unsafe {
+                                &*(buf.as_ptr() as *const _)
+                            })
+                        }
+                        Some(ACInterfaceSubtype::FeatureUnitDescriptor) => {
+                            AudioDescriptorRef::ACFeatureUnit(unsafe {
+                                &*(buf.as_ptr() as *const _)
+                            })
+                        }
+                        Some(ACInterfaceSubtype::ClockSourceDescriptor) => {
+                            AudioDescriptorRef::ACClockSource(unsafe {
+                                &*(buf.as_ptr() as *const _)
+                            })
+                        }
+                        Some(ACInterfaceSubtype::ClockSelectorDescriptor) => {
+                            AudioDescriptorRef::ACClockSelector(unsafe {
+                                &*(buf.as_ptr() as *const _)
+                            })
+                        }
+                        _ => Unknown(buf),
+                    },
                     AudioSubclass::AudioStream => match ASInterfaceSubtype::from_repr(buf[2]) {
-                        Some(ASInterfaceSubtype::AudioStreamHeader) => AudioDescriptorRef::ASInterface(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(ASInterfaceSubtype::FormatType1) => AudioDescriptorRef::ASFormatType1(unsafe { &*(buf.as_ptr() as *const _) }),
-                        _ => Unknown(buf)
-                    }
+                        Some(ASInterfaceSubtype::AudioStreamHeader) => {
+                            AudioDescriptorRef::ASInterface(unsafe { &*(buf.as_ptr() as *const _) })
+                        }
+                        Some(ASInterfaceSubtype::FormatType1) => {
+                            AudioDescriptorRef::ASFormatType1(unsafe {
+                                &*(buf.as_ptr() as *const _)
+                            })
+                        }
+                        _ => Unknown(buf),
+                    },
                     AudioSubclass::MidiStream => match MSInterfaceSubtype::from_repr(buf[2]) {
-                        Some(MSInterfaceSubtype::MsHeader) => AudioDescriptorRef::MSInterface(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(MSInterfaceSubtype::MidiOutJack) => AudioDescriptorRef::MSOutJack(unsafe { &*(buf.as_ptr() as *const _) }),
-                        Some(MSInterfaceSubtype::MidiInJack) => AudioDescriptorRef::MSInJack(unsafe { &*(buf.as_ptr() as *const _) }),
-                        _ => Unknown(buf)
-                    }
+                        Some(MSInterfaceSubtype::MsHeader) => {
+                            AudioDescriptorRef::MSInterface(unsafe { &*(buf.as_ptr() as *const _) })
+                        }
+                        Some(MSInterfaceSubtype::MidiOutJack) => {
+                            AudioDescriptorRef::MSOutJack(unsafe { &*(buf.as_ptr() as *const _) })
+                        }
+                        Some(MSInterfaceSubtype::MidiInJack) => {
+                            AudioDescriptorRef::MSInJack(unsafe { &*(buf.as_ptr() as *const _) })
+                        }
+                        _ => Unknown(buf),
+                    },
                 },
                 DescriptorType::ClassEndpoint => match subclass {
                     AudioSubclass::AudioStream => match ASEndpointSubtype::from_repr(buf[2]) {
-                        Some(ASEndpointSubtype::IsochronousEndpoint) => AudioDescriptorRef::ASEndpoint(unsafe { &*(buf.as_ptr() as *const _) }),
-                        _ => Unknown(buf)
-                    }
+                        Some(ASEndpointSubtype::IsochronousEndpoint) => {
+                            AudioDescriptorRef::ASEndpoint(unsafe { &*(buf.as_ptr() as *const _) })
+                        }
+                        _ => Unknown(buf),
+                    },
                     AudioSubclass::MidiStream => match MSEndpointSubtype::from_repr(buf[2]) {
-                        Some(MSEndpointSubtype::BulkEndpoint) => AudioDescriptorRef::MSEndpoint(unsafe { &*(buf.as_ptr() as *const _) }),
-                        _ => Unknown(buf)
-                    }
-                    _ => Unknown(buf)
+                        Some(MSEndpointSubtype::BulkEndpoint) => {
+                            AudioDescriptorRef::MSEndpoint(unsafe { &*(buf.as_ptr() as *const _) })
+                        }
+                        _ => Unknown(buf),
+                    },
+                    _ => Unknown(buf),
                 },
-                _ => Unknown(buf)
-            }
+                _ => Unknown(buf),
+            };
         }
     }
     Unknown(buf)
@@ -230,7 +270,6 @@ pub struct ASEndpointDescriptor {
     pub w_lock_delay: u16,
 }
 
-
 // MIDI Stream
 
 #[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
@@ -279,7 +318,7 @@ pub struct MSOutJackDescriptor {
 
 pub enum JackType {
     Embedded = 1,
-    External = 2
+    External = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
@@ -297,8 +336,3 @@ pub struct MSEndpointDescriptor {
     pub b_num_emb_midi_jack: u8,
     pub ba_assoc_jack_id: u8,
 }
-
-
-
-
-

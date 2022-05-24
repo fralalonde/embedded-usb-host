@@ -15,16 +15,19 @@ extern crate defmt;
 #[macro_use]
 extern crate hash32_derive;
 
-pub mod descriptor;
-pub mod control;
+#[macro_use]
+extern crate static_assertions;
+
 pub mod address;
 pub mod class;
+pub mod setup;
+pub mod descriptor;
 pub mod device;
-pub mod parser;
-pub mod stack;
+pub mod driver;
 pub mod endpoint;
 pub mod host;
-pub mod driver;
+pub mod parser;
+pub mod stack;
 
 #[cfg(feature = "atsamd")]
 pub mod atsamd;
@@ -32,24 +35,22 @@ pub mod atsamd;
 #[cfg(feature = "stm32")]
 pub mod stm32;
 
+pub use address::*;
+pub use class::*;
+pub use setup::*;
 use core::mem;
-use hash32::Hasher;
-use heapless::FnvIndexMap;
 pub use descriptor::*;
 pub use device::*;
-pub use parser::*;
-pub use control::*;
-pub use address::*;
-pub use stack::*;
-pub use endpoint::*;
-pub use host::*;
 pub use driver::*;
-pub use class::*;
-
+pub use endpoint::*;
+use hash32::Hasher;
+use heapless::FnvIndexMap;
+pub use host::*;
+pub use parser::*;
+pub use stack::*;
 
 /// Errors that can be generated when attempting to do a USB transfer.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
 pub enum UsbError {
     /// An error that may be retried.
     Transient(&'static str),
@@ -69,8 +70,7 @@ pub enum UsbError {
 /// The type of transfer to use when talking to USB devices.
 ///
 /// cf §9.6.6 of USB 2.0
-#[derive(Copy, Clone, Debug, PartialEq, Eq, strum_macros::FromRepr)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, strum_macros::FromRepr, defmt::Format)]
 #[repr(u8)]
 pub enum TransferType {
     Control = 0,
@@ -88,7 +88,10 @@ impl From<u8> for TransferType {
 }
 
 impl hash32::Hash for TransferType {
-    fn hash<H>(&self, state: &mut H) where H: Hasher {
+    fn hash<H>(&self, state: &mut H)
+        where
+            H: Hasher,
+    {
         state.write(&[*self as u8])
     }
 }
@@ -109,7 +112,11 @@ pub trait MaxPacketSize {
     fn max_packet_size(&self) -> u16;
 }
 
-fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(map: &mut FnvIndexMap<K, V, N>, key: K, new: F) -> Option<&mut V> {
+fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(
+    map: &mut FnvIndexMap<K, V, N>,
+    key: K,
+    new: F,
+) -> Option<&mut V> {
     if !map.contains_key(&key) {
         let _ = map.insert(key, new());
     }
@@ -119,4 +126,10 @@ fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(m
 fn to_slice_mut<T>(v: &mut T) -> &mut [u8] {
     let ptr = v as *mut T as *mut u8;
     unsafe { core::slice::from_raw_parts_mut(ptr, mem::size_of::<T>()) }
+}
+
+#[cfg(test)]
+fn assert_offset<T>(name: &str, field: &T, base: usize, offset: usize) {
+    let ptr = field as *const _ as usize;
+    assert_eq!(ptr - base, offset, "{} register offset.", name);
 }

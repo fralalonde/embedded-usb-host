@@ -2,9 +2,7 @@
 
 const MAX_DEVICES: u8 = 127;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[derive(defmt::Format)]
-#[derive(Hash32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, defmt::Format, Hash32)]
 pub struct DevAddress(u8);
 
 pub struct AddressPool {
@@ -13,7 +11,9 @@ pub struct AddressPool {
 
 impl From<u8> for DevAddress {
     fn from(addr: u8) -> Self {
-        if addr > MAX_DEVICES { panic!("USB addr out of range") }
+        if addr > MAX_DEVICES {
+            panic!("USB addr out of range")
+        }
         DevAddress(addr)
     }
 }

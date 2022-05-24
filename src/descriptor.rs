@@ -7,12 +7,11 @@
 //! when necessary to ensure that they are able to be directly
 //! marshalled to the bus.
 
+use crate::MaxPacketSize;
 use core::convert::TryFrom;
 use core::mem;
-use crate::MaxPacketSize;
 
-#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
-#[derive(defmt::Format)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr, defmt::Format)]
 #[repr(u8)]
 pub enum DescriptorType {
     Device = 1,
@@ -62,8 +61,7 @@ impl TryFrom<u8> for DescriptorType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
-#[derive(defmt::Format)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr, defmt::Format)]
 #[repr(u8)]
 pub enum DeviceClass {
     FromInterface = 0x0,
@@ -93,8 +91,7 @@ pub enum DeviceClass {
 
 pub type DeviceSubclass = u8;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 #[repr(C)]
 pub struct DeviceDescriptor {
     pub b_length: u8,
@@ -134,8 +131,7 @@ impl Default for DeviceDescriptor {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 #[repr(C)]
 pub struct ConfigurationDescriptor {
     pub b_length: u8,
@@ -163,8 +159,7 @@ impl Default for ConfigurationDescriptor {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 #[repr(C)]
 pub struct InterfaceDescriptor {
     pub b_length: u8,
@@ -178,8 +173,7 @@ pub struct InterfaceDescriptor {
     pub i_interface: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 #[repr(C)]
 pub struct InterfaceAssociationDescriptor {
     pub b_length: u8,
@@ -192,8 +186,7 @@ pub struct InterfaceAssociationDescriptor {
     pub i_function: i8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 #[repr(C)]
 pub struct EndpointDescriptor {
     pub b_length: u8,
@@ -213,8 +206,7 @@ impl MaxPacketSize for EndpointDescriptor {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[derive(defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
 #[repr(C)]
 pub struct Audio1EndpointDescriptor {
     pub b_length: u8,
@@ -242,6 +234,7 @@ mod test {
 
     use core::mem;
     use core::slice;
+    use crate::assert_offset;
 
     #[test]
     fn device_descriptor_layout() {
@@ -376,8 +369,11 @@ mod test {
             b_descriptor_type: DescriptorType::Endpoint,
             b_endpoint_address: 2,
             bm_attributes: 0xae,
-            w_max_packet_size: 0xdead,
+
             b_interval: 0x7a,
+            // w_max_packet_size: 0xdead,
+            w_max_packet_size_lo: ad,
+            w_max_packet_size_hi: de,
         };
         let base = &desc as *const _ as usize;
         assert_offset("b_length", &desc.b_length, base, 0x00);
@@ -387,13 +383,8 @@ mod test {
         assert_offset("w_max_packet_size", &desc.w_max_packet_size, base, 0x04);
         assert_offset("b_interval", &desc.b_interval, base, 0x06);
 
-        let got = unsafe { slice::from_raw_parts(&desc as *const _ as *const u8, len) };
-        let want = &[0x07, 0x05, 0x02, 0xae, 0xad, 0xde, 0x7a];
-        assert_eq!(got, want);
-    }
-
-    fn assert_offset<T>(name: &str, field: &T, base: usize, offset: usize) {
-        let ptr = field as *const _ as usize;
-        assert_eq!(ptr - base, offset, "{} register offset.", name);
+        let result = unsafe { slice::from_raw_parts(&desc as *const _ as *const u8, len) };
+        let expected = &[0x07, 0x05, 0x02, 0xae, 0xad, 0xde, 0x7a];
+        assert_eq!(result, expected);
     }
 }
