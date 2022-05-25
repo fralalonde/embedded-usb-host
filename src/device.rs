@@ -35,15 +35,14 @@ pub struct Device {
     state: DeviceState,
     device_address: DevAddress,
     max_packet_size: u16,
-    in_toggle: bool,
-    out_toggle: bool,
+    toggle: bool,
     error: Option<UsbError>,
 }
 
 impl hash32::Hash for Device {
     fn hash<H>(&self, state: &mut H)
-    where
-        H: hash32::Hasher,
+        where
+            H: hash32::Hasher,
     {
         self.device_address.hash(state)
     }
@@ -56,8 +55,7 @@ impl Device {
             device_address: DevAddress::from(0),
             max_packet_size: max_bus_packet_size,
             error: None,
-            in_toggle: false,
-            out_toggle: false,
+            toggle: false,
         }
     }
 
@@ -200,20 +198,12 @@ impl MaxPacketSize for Device {
 }
 
 impl DataToggle for Device {
-    fn in_toggle(&self) -> bool {
-        self.in_toggle
+    fn toggle(&self) -> bool {
+        self.toggle
     }
 
-    fn set_in_toggle(&mut self, toggle: bool) {
-        self.in_toggle = toggle
-    }
-
-    fn out_toggle(&self) -> bool {
-        self.out_toggle
-    }
-
-    fn set_out_toggle(&mut self, toggle: bool) {
-        self.out_toggle = toggle
+    fn set_toggle(&mut self, toggle: bool) {
+        self.toggle = toggle
     }
 }
 

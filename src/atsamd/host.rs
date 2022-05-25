@@ -1,4 +1,4 @@
-use crate::{stack, HostEndpoint, HostEvent, RequestCode, RequestType, UsbError, UsbHost, WValue};
+use crate::{ HostEndpoint, HostEvent, RequestCode, RequestType, UsbError, UsbHost, WValue};
 
 use crate::atsamd::pipe::table::PipeTable;
 use atsamd_hal::{

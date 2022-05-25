@@ -44,15 +44,11 @@ pub trait BulkEndpoint {
 pub struct Endpoint {
     props: EpProps,
     max_packet_size: u16,
-    in_toggle: bool,
-    out_toggle: bool,
+    toggle: bool,
 }
 
 impl hash32::Hash for Endpoint {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: Hasher,
-    {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         self.props.hash(state)
     }
 }
@@ -71,8 +67,7 @@ impl Endpoint {
                 transfer_type: TransferType::from(bm_attributes),
             },
             max_packet_size,
-            in_toggle: false,
-            out_toggle: false,
+            toggle: false,
         }
     }
 
@@ -132,20 +127,12 @@ impl MaxPacketSize for Endpoint {
 }
 
 impl DataToggle for Endpoint {
-    fn in_toggle(&self) -> bool {
-        self.in_toggle
+    fn toggle(&self) -> bool {
+        self.toggle
     }
 
-    fn set_in_toggle(&mut self, toggle: bool) {
-        self.in_toggle = toggle
-    }
-
-    fn out_toggle(&self) -> bool {
-        self.out_toggle
-    }
-
-    fn set_out_toggle(&mut self, toggle: bool) {
-        self.out_toggle = toggle
+    fn set_toggle(&mut self, toggle: bool) {
+        self.toggle = toggle
     }
 }
 
@@ -210,19 +197,11 @@ pub trait EndpointProperties {
 pub trait DataToggle {
     /// The data toggle sequence bit for the next transfer from the
     /// device to the host.
-    fn in_toggle(&self) -> bool;
+    fn toggle(&self) -> bool;
 
     /// The `USBHost` will, when required, update the data toggle
     /// sequence bit for the next device to host transfer.
-    fn set_in_toggle(&mut self, toggle: bool);
-
-    /// The data toggle sequence bit for the next transfer from the
-    /// host to the device.
-    fn out_toggle(&self) -> bool;
-
-    /// The `USBHost` will, when required, update the data toggle
-    /// sequence bit for the next host to device transfer.
-    fn set_out_toggle(&mut self, toggle: bool);
+    fn set_toggle(&mut self, toggle: bool);
 }
 
 pub trait HostEndpoint: DataToggle + MaxPacketSize + EndpointProperties {}

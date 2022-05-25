@@ -27,14 +27,10 @@ impl PipeTable {
         host: &'b mut usb::HOST,
         endpoint: &dyn HostEndpoint,
     ) -> Pipe<'a, 'b> {
-        let i = if endpoint.endpoint_address().absolute() == 0 {
-            0
-        } else {
-            1
-        };
+        let pipe_idx = if endpoint.endpoint_address().absolute() == 0 { 0 } else { 1 };
 
-        let pregs = PipeRegs::from(host, i);
-        let pdesc = &mut self.tbl[i];
+        let pregs = PipeRegs::from(host, pipe_idx);
+        let pdesc = &mut self.tbl[pipe_idx];
 
         pregs.cfg.write(|w| {
             let ptype = PipeType::from(endpoint.transfer_type()) as u8;

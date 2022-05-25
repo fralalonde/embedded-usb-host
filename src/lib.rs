@@ -20,7 +20,7 @@ extern crate static_assertions;
 
 pub mod address;
 pub mod class;
-pub mod setup;
+pub mod control;
 pub mod descriptor;
 pub mod device;
 pub mod driver;
@@ -37,7 +37,7 @@ pub mod stm32;
 
 pub use address::*;
 pub use class::*;
-pub use setup::*;
+pub use control::*;
 use core::mem;
 pub use descriptor::*;
 pub use device::*;

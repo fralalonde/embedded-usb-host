@@ -130,8 +130,7 @@ impl Pipe<'_, '_> {
         while bytes_received < buf.len() {
             // Move the buffer pointer forward as we get data.
             self.desc.bank0.addr.write(|w| unsafe {
-                w.addr()
-                    .bits(buf.as_mut_ptr() as u32 + bytes_received as u32)
+                w.addr().bits(buf.as_mut_ptr() as u32 + bytes_received as u32)
             });
             self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
 
@@ -164,10 +163,7 @@ impl Pipe<'_, '_> {
 
         let mut bytes_sent = 0;
         while bytes_sent < buf.len() {
-            self.desc
-                .bank0
-                .addr
-                .write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32 + bytes_sent as u32) });
+            self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32 + bytes_sent as u32) });
             self.sync_tx(ep, PipeToken::Out, after_millis)?;
 
             let sent = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
@@ -181,14 +177,14 @@ impl Pipe<'_, '_> {
     fn data_toggle(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken) {
         let toggle = match token {
             PipeToken::In => {
-                let t = !ep.in_toggle();
-                ep.set_in_toggle(t);
+                let t = !ep.toggle();
+                ep.set_toggle(t);
                 t
             }
 
             PipeToken::Out => {
-                let t = !ep.out_toggle();
-                ep.set_out_toggle(t);
+                let t = !ep.toggle();
+                ep.set_toggle(t);
                 t
             }
 
@@ -234,11 +230,9 @@ impl Pipe<'_, '_> {
             let res = self.dispatch_result(token);
             match res {
                 Ok(true) => {
-                    // Swap sequence bits on successful transfer.
-                    if token == PipeToken::In {
-                        ep.set_in_toggle(!ep.in_toggle());
-                    } else if token == PipeToken::Out {
-                        ep.set_out_toggle(!ep.out_toggle());
+                    if matches!(token, PipeToken::In | PipeToken::Out) {
+                        // Save endpoint toggle state on successful transfer.
+                        ep.set_toggle(!ep.toggle());
                     }
                     return Ok(());
                 }
@@ -249,8 +243,8 @@ impl Pipe<'_, '_> {
                         PipeErr::DataToggle => self.data_toggle(ep, token),
 
                         // Flow error on interrupt pipes means we got a NAK = no data
-                        PipeErr::Flow if ep.transfer_type() == TransferType::Interrupt => {
-                            return Err(PipeErr::Flow)
+                        PipeErr::Flow if matches!(ep.transfer_type(), TransferType::Interrupt) => {
+                            return Err(PipeErr::Flow);
                         }
 
                         PipeErr::Stall => return Err(PipeErr::Stall),
@@ -268,11 +262,10 @@ impl Pipe<'_, '_> {
     }
 
     fn dispatch_packet(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken) {
-        self.regs
-            .cfg
-            .modify(|_, w| unsafe { w.ptoken().bits(token as u8) });
+        self.regs.cfg.modify(|_, w| unsafe { w.ptoken().bits(token as u8) });
         self.regs.intflag.modify(|_, w| w.trfail().set_bit());
         self.regs.intflag.modify(|_, w| w.perr().set_bit());
+        self.regs.intflag.modify(|_, w| w.stall().set_bit());
 
         match token {
             PipeToken::Setup => {
@@ -282,12 +275,11 @@ impl Pipe<'_, '_> {
                 // Toggles should be 1 for host and function's
                 // sequence at end of setup transaction. cf §8.6.1 of USB 2.0.
                 self.dtgl_clear();
-                ep.set_in_toggle(true);
-                ep.set_out_toggle(true);
+                ep.set_toggle(true);
             }
             PipeToken::In => {
                 self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
-                if ep.in_toggle() {
+                if ep.toggle() {
                     self.dtgl_set();
                 } else {
                     self.dtgl_clear();
@@ -296,7 +288,7 @@ impl Pipe<'_, '_> {
             PipeToken::Out => {
                 self.regs.intflag.write(|w| w.trcpt0().set_bit());
                 self.regs.statusset.write(|w| w.bk0rdy().set_bit());
-                if ep.out_toggle() {
+                if ep.toggle() {
                     self.dtgl_set();
                 } else {
                     self.dtgl_clear();
@@ -309,7 +301,7 @@ impl Pipe<'_, '_> {
     }
 
     fn dispatch_result(&mut self, token: PipeToken) -> Result<bool, PipeErr> {
-        if self.is_transfer_complete(token)? {
+        if self.is_transfer_complete(token) {
             self.regs.statusset.write(|w| w.pfreeze().set_bit());
             Ok(true)
         } else if self.desc.bank0.status_bk.read().errorflow().bit_is_set() {
@@ -318,6 +310,9 @@ impl Pipe<'_, '_> {
             Err(PipeErr::HardwareTimeout)
         } else if self.desc.bank0.status_pipe.read().dtgler().bit_is_set() {
             Err(PipeErr::DataToggle)
+        } else if self.regs.intflag.read().stall().bit_is_set() {
+            self.regs.intflag.write(|w| w.stall().set_bit());
+            Err(PipeErr::Stall)
         } else if self.regs.intflag.read().trfail().bit_is_set() {
             self.regs.intflag.write(|w| w.trfail().set_bit());
             Err(PipeErr::TransferFail)
@@ -327,34 +322,20 @@ impl Pipe<'_, '_> {
         }
     }
 
-    fn is_transfer_complete(&mut self, token: PipeToken) -> Result<bool, PipeErr> {
+    fn is_transfer_complete(&mut self, token: PipeToken) -> bool {
         match token {
-            PipeToken::Setup => {
+            PipeToken::Setup =>
                 if self.regs.intflag.read().txstp().bit_is_set() {
                     self.regs.intflag.write(|w| w.txstp().set_bit());
-                    Ok(true)
-                } else {
-                    Ok(false)
+                    return true;
                 }
-            }
-            PipeToken::In => {
+            PipeToken::In | PipeToken::Out =>
                 if self.regs.intflag.read().trcpt0().bit_is_set() {
                     self.regs.intflag.write(|w| w.trcpt0().set_bit());
-                    Ok(true)
-                } else {
-                    Ok(false)
+                    return true;
                 }
-            }
-            PipeToken::Out => {
-                if self.regs.intflag.read().trcpt0().bit_is_set() {
-                    self.regs.intflag.write(|w| w.trcpt0().set_bit());
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-            _ => Err(PipeErr::InvalidToken),
         }
+        false
     }
 }
 
@@ -364,7 +345,7 @@ pub(crate) enum PipeToken {
     Setup = 0x0,
     In = 0x1,
     Out = 0x2,
-    _Reserved = 0x3,
+    // _Reserved = 0x3,
 }
 
 // TODO: merge into SVD for pipe cfg register.

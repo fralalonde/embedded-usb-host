@@ -46,7 +46,7 @@ pub struct UsbMidiDriver {
 
     /// Keep track of endpoints for each device
     device_endpoints:
-        FnvIndexMap<DevAddress, Vec<Endpoint, MAX_ENDPOINTS_PER_DEV>, MAX_MIDI_DEVICES>,
+    FnvIndexMap<DevAddress, Vec<Endpoint, MAX_ENDPOINTS_PER_DEV>, MAX_MIDI_DEVICES>,
 
     /// Keep track of jacks & ports for each endpoint
     ep_jack_port: FnvIndexMap<
@@ -78,7 +78,7 @@ impl UsbMidiDriver {
             &mut move |midi: &mut (dyn MidiPorts + Send + Sync)| match midi.acquire_port(info) {
                 Ok(handle) => {
                     if let Some(jack_ports) =
-                        map_entry_mut(&mut self.ep_jack_port, *ep, || FnvIndexMap::new())
+                    map_entry_mut(&mut self.ep_jack_port, *ep, || FnvIndexMap::new())
                     {
                         if let Err(err) = jack_ports.insert(jack_id, handle) {
                             warn!("TooManyPorts: {}", err)
@@ -161,7 +161,7 @@ impl Driver for UsbMidiDriver {
                 warn!("More than one endpoint for device {}", prev_ep)
             }
             if let Some(endpoints) =
-                map_entry_mut(&mut self.device_endpoints, dev_addr, || Vec::new())
+            map_entry_mut(&mut self.device_endpoints, dev_addr, || Vec::new())
             {
                 if !endpoints.push(new_ep).is_ok() {
                     warn!("Too many endpoints for device")
@@ -263,6 +263,7 @@ impl Driver for UsbMidiDriver {
                             // received packets are dispatched to ports according to their cable_num / jack_id
                             let mut buf = [0; 64];
 
+                            debug!("IN from ep {:?}", ep);
                             match host.in_transfer(ep, &mut buf) {
                                 Ok(0) => {}
                                 Ok(len) => {
@@ -272,14 +273,14 @@ impl Driver for UsbMidiDriver {
                                             // TODO receive all packets at once
                                             Ok(Some(packet)) => {
                                                 if let Some(port_handle) =
-                                                    jack_port.get(&packet.cable_number())
+                                                jack_port.get(&packet.cable_number())
                                                 {
                                                     debug!(
                                                         "PACKET from jack {:?}",
                                                         packet.cable_number()
                                                     );
                                                     if let Err(err) =
-                                                        midi.write(port_handle, packet)
+                                                    midi.write(port_handle, packet)
                                                     {
                                                         warn!(
                                                             "Failed to read from MIDI port: {}",
@@ -294,7 +295,7 @@ impl Driver for UsbMidiDriver {
                                     }
                                 }
                                 Err(_e) => {
-                                    // warn!("USB MIDI IN Failed {:?}", e)
+                                    warn!("USB MIDI IN Failed {:?}", _e)
                                 }
                             }
                         }
