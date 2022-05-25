@@ -6,27 +6,19 @@ use crate::{
 #[cfg(feature = "defmt")]
 use defmt::Formatter;
 
-pub trait ControlEndpoint: HostEndpoint {
-    fn control_get_descriptor(
-        &mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8],
-    ) -> Result<usize, UsbError>;
+pub trait BulkEndpoint: HostEndpoint + Sized {
+    fn bulk_in(&mut self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError> {
+        host.in_transfer(self as &mut dyn HostEndpoint, buffer)
+            .map_err(|err| UsbError::BulkIn(self.ep_props(), err))
+    }
 
-    fn control_set(
-        &mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8,
-        index: u16,
-    ) -> Result<(), HostError>;
-
-    fn control_set_class(
-        &mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8,
-        windex: u16,
-    ) -> Result<(), HostError>;
+    fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError> {
+        host.out_transfer(self, buffer)
+            .map_err(|err| UsbError::BulkOut(self.ep_props(), err))
+    }
 }
 
-pub trait BulkEndpoint {
-    fn bulk_in(&mut self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError>;
-
-    fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError>;
-}
+impl BulkEndpoint for Endpoint {}
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -62,7 +54,7 @@ impl Endpoint {
 
 /// Read-only utility structure that captures an endpoint's static properties.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, hash32_derive::Hash32)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+// #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct EpProps {
     dev_addr: DevAddress,
@@ -70,14 +62,14 @@ pub struct EpProps {
     tr_type: TransferType,
 }
 
-// #[cfg(feature = "defmt")]
-// impl defmt::Format for EpProps {
-//     fn format(&self, fmt: Formatter) {
-//         self.dev_addr.format(fmt);
-//         self.ep_addr.format(fmt);
-//         self.tr_type.format(fmt);
-//     }
-// }
+#[cfg(feature = "defmt")]
+impl defmt::Format for EpProps {
+    fn format(&self, fmt: Formatter) {
+        self.dev_addr.format(fmt);
+        self.ep_addr.format(fmt);
+        self.tr_type.format(fmt);
+    }
+}
 
 impl EndpointProperties for EpProps {
     fn device_address(&self) -> DevAddress {
@@ -202,6 +194,12 @@ pub trait DataToggle {
     /// The `USBHost` will, when required, update the data toggle
     /// sequence bit for the next device to host transfer.
     fn set_toggle(&mut self, toggle: bool);
+
+    fn flip_toggle(&mut self) -> bool {
+        let flipped = !self.toggle();
+        self.set_toggle(flipped);
+        flipped
+    }
 }
 
 pub trait HostEndpoint: DataToggle + MaxPacketSize + EndpointProperties {}

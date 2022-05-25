@@ -64,13 +64,14 @@ pub struct HostController {
     _dp_pad: gpio::Pa25<gpio::PfG>,
     _sof_pad: Option<gpio::Pa23<gpio::PfG>>,
     host_enable_pin: Option<gpio::Pa28<Output<OpenDrain>>>,
+    now: fn() -> u64,
     after_millis: fn(u64) -> u64,
 }
 
 impl HostController {
     pub fn new(
         usb: USB, pins: HostPins, port: &mut gpio::Port, clocks: &mut GenericClockController, power: &mut PM,
-        after_millis: fn(u64) -> u64,
+        now: fn() -> u64, after_millis: fn(u64) -> u64,
     ) -> Self {
         power.apbbmask.modify(|_, w| w.usb_().set_bit());
 
@@ -87,6 +88,7 @@ impl HostController {
             _dp_pad: pins.dp_pin.into_function_g(port),
             _sof_pad: pins.sof_pin.map(|p| p.into_function_g(port)),
             host_enable_pin: pins.host_enable_pin.map(|p| p.into_open_drain_output(port)),
+            now,
             after_millis,
         }
     }
@@ -206,6 +208,10 @@ impl UsbHost for HostController {
             0x0 => 64,
             _ => 8,
         }
+    }
+
+    fn now(&self) -> u64 {
+        (self.now)()
     }
 
     fn after_millis(&self, ms: u64) -> u64 {

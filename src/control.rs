@@ -1,6 +1,7 @@
 //! Structures and constants for control transfers
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct RequestType(u8);
 
@@ -101,6 +102,7 @@ impl WValue {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum RequestCode {
     GetStatus = 0,

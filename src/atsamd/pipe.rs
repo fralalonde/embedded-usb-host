@@ -137,11 +137,7 @@ impl Pipe<'_, '_> {
 
     fn data_toggle(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken) {
         let toggle = match token {
-            PipeToken::In | PipeToken::Out => {
-                let t = !ep.toggle();
-                ep.set_toggle(t);
-                t
-            }
+            PipeToken::In | PipeToken::Out => ep.flip_toggle(),
             PipeToken::Setup => false,
         };
 
@@ -152,10 +148,12 @@ impl Pipe<'_, '_> {
         }
     }
 
+    #[inline]
     fn dtgl_set(&mut self) {
         self.regs.statusset.write(|w| w.dtgl().set_bit());
     }
 
+    #[inline]
     fn dtgl_clear(&mut self) {
         self.regs.statusclr.write(|w| unsafe { w.bits(1) });
     }
@@ -198,7 +196,7 @@ impl Pipe<'_, '_> {
 
                         HostError::Stall => return Err(HostError::Stall),
 
-                        _any => {
+                        other => {
                             naks += 1;
                             if naks > NAK_LIMIT {
                                 return Err(err);
@@ -221,26 +219,23 @@ impl Pipe<'_, '_> {
                 self.regs.intflag.write(|w| w.txstp().set_bit());
                 self.regs.statusset.write(|w| w.bk0rdy().set_bit());
 
-                // Toggles should be 1 for host and function's
-                // sequence at end of setup transaction. cf §8.6.1 of USB 2.0.
                 self.dtgl_clear();
                 ep.set_toggle(true);
             }
             PipeToken::In => {
+                // self.regs.intflag.write(|w| w.trcpt0().set_bit());
                 self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
-                if ep.toggle() {
-                    self.dtgl_set();
-                } else {
-                    self.dtgl_clear();
+                match ep.toggle() {
+                    true => self.dtgl_set(),
+                    false => self.dtgl_clear(),
                 }
             }
             PipeToken::Out => {
                 self.regs.intflag.write(|w| w.trcpt0().set_bit());
                 self.regs.statusset.write(|w| w.bk0rdy().set_bit());
-                if ep.toggle() {
-                    self.dtgl_set();
-                } else {
-                    self.dtgl_clear();
+                match ep.toggle() {
+                    true => self.dtgl_set(),
+                    false => self.dtgl_clear(),
                 }
             }
         }
@@ -255,6 +250,12 @@ impl Pipe<'_, '_> {
             Ok(true)
         } else if self.desc.bank0.status_bk.read().errorflow().bit_is_set() {
             Err(HostError::Nak)
+        } else if self.desc.bank0.status_pipe.read().crc16er().bit_is_set() {
+            Err(HostError::Crc)
+        } else if self.desc.bank0.status_pipe.read().pider().bit_is_set() {
+            Err(HostError::Pid)
+        } else if self.desc.bank0.status_pipe.read().dapider().bit_is_set() {
+            Err(HostError::DataPid)
         } else if self.desc.bank0.status_pipe.read().touter().bit_is_set() {
             Err(HostError::HardTimeout)
         } else if self.desc.bank0.status_pipe.read().dtgler().bit_is_set() {

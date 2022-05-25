@@ -1,8 +1,8 @@
 use crate::address::DevAddress;
 use crate::{
-    to_slice_mut, ConfigNum, ConfigurationDescriptor, ControlEndpoint, DataToggle, DescriptorParser, DescriptorType,
-    DeviceClass, DeviceDescriptor, EndpointProperties, EpAddress, HostEndpoint, HostError, InterfaceNum, MaxPacketSize,
-    RequestCode, RequestDirection, RequestKind, RequestRecipient, RequestType, TransferType, UsbError, UsbHost, WValue,
+    to_slice_mut, ConfigNum, ConfigurationDescriptor, DataToggle, DescriptorParser, DescriptorType, DeviceClass,
+    DeviceDescriptor, EndpointProperties, EpAddress, HostEndpoint, HostError, InterfaceNum, MaxPacketSize, RequestCode,
+    RequestDirection, RequestKind, RequestRecipient, RequestType, TransferType, UsbError, UsbHost, WValue,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,8 +113,7 @@ impl Device {
 
     pub fn set_address(&mut self, host: &mut dyn UsbHost, dev_addr: DevAddress) -> Result<(), UsbError> {
         if 0u8 == self.device_address.into() {
-            self.control_set(host, RequestCode::SetAddress, RequestRecipient::Device, dev_addr.into(), 0, 0)
-                .map_err(|err| UsbError::SetAddress(self.ep_props(), err))?;
+            self.control_set(host, RequestCode::SetAddress, RequestRecipient::Device, dev_addr.into(), 0, 0)?;
             self.device_address = dev_addr;
             self.state = DeviceState::SetConfig(host.after_millis(10));
             Ok(())
@@ -127,21 +126,19 @@ impl Device {
         if config_num == 0 {
             return Err(UsbError::InvalidConfig);
         }
-        self.control_set(host, RequestCode::SetConfiguration, RequestRecipient::Device, config_num, 0, 0)
-            .map_err(|err| UsbError::SetConfiguration(self.ep_props(), err))?;
+        self.control_set(host, RequestCode::SetConfiguration, RequestRecipient::Device, config_num, 0, 0)?;
         Ok(())
     }
 
     pub fn set_interface(&mut self, host: &mut dyn UsbHost, iface_num: u8, protocol: u8) -> Result<(), UsbError> {
-        host.control_transfer(
-            self,
+        self.control(
+            host,
             RequestType::from((RequestDirection::HostToDevice, RequestKind::Class, RequestRecipient::Interface)),
             RequestCode::SetInterface,
             WValue::lo_hi(protocol, 0),
             u16::from(iface_num),
             None,
-        )
-        .map_err(|err| UsbError::SetInterface(self.ep_props(), err))?;
+        )?;
         Ok(())
     }
 }
@@ -178,37 +175,42 @@ impl DataToggle for Device {
     }
 }
 
-impl ControlEndpoint for Device {
+pub trait ControlEndpoint: HostEndpoint + Sized {
+    /// Generic control transfer method.
+    /// Add transfer context to host errors.
+    fn control(
+        &mut self, host: &mut dyn UsbHost, request: RequestType, code: RequestCode, w_value: WValue, w_index: u16,
+        buffer: Option<&mut [u8]>,
+    ) -> Result<usize, UsbError> {
+        let len = host
+            .control_transfer(self as &mut dyn HostEndpoint, request, code, w_value, w_index, buffer)
+            .map_err(|err| UsbError::Control(self.device_address(), request, code, err))?;
+        Ok(len)
+    }
+
     /// Retrieve descriptor(s)
     fn control_get_descriptor(
         &mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, desc_index: u8, buffer: &mut [u8],
     ) -> Result<usize, UsbError> {
-        let len = host
-            .control_transfer(
-                self,
-                RequestType::from((RequestDirection::DeviceToHost, RequestKind::Standard, RequestRecipient::Device)),
-                RequestCode::GetDescriptor,
-                WValue::lo_hi(desc_index, desc_type as u8),
-                0,
-                Some(buffer),
-            )
-            .map_err(|err| UsbError::GetDescriptor(self.ep_props(), err))?;
-        Ok(len)
+        let request =
+            RequestType::from((RequestDirection::DeviceToHost, RequestKind::Standard, RequestRecipient::Device));
+        self.control(
+            host,
+            request,
+            RequestCode::GetDescriptor,
+            WValue::lo_hi(desc_index, desc_type as u8),
+            0,
+            Some(buffer),
+        )
     }
 
     /// Generic control write
     fn control_set(
         &mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8,
         windex: u16,
-    ) -> Result<(), HostError> {
-        host.control_transfer(
-            self,
-            RequestType::from((RequestDirection::HostToDevice, RequestKind::Standard, recip)),
-            code,
-            WValue::lo_hi(lo_val, hi_val),
-            windex,
-            None,
-        )?;
+    ) -> Result<(), UsbError> {
+        let request = RequestType::from((RequestDirection::HostToDevice, RequestKind::Standard, recip));
+        self.control(host, request, code, WValue::lo_hi(lo_val, hi_val), windex, None)?;
         Ok(())
     }
 
@@ -216,18 +218,14 @@ impl ControlEndpoint for Device {
     fn control_set_class(
         &mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8,
         windex: u16,
-    ) -> Result<(), HostError> {
-        host.control_transfer(
-            self,
-            RequestType::from((RequestDirection::HostToDevice, RequestKind::Class, recip)),
-            code,
-            WValue::lo_hi(lo_val, hi_val),
-            windex,
-            None,
-        )?;
+    ) -> Result<(), UsbError> {
+        let request = RequestType::from((RequestDirection::HostToDevice, RequestKind::Class, recip));
+        self.control(host, request, code, WValue::lo_hi(lo_val, hi_val), windex, None)?;
         Ok(())
     }
 }
+
+impl ControlEndpoint for Device {}
 
 /// Trait for drivers on the USB host.
 pub trait Driver {

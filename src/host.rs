@@ -17,9 +17,7 @@ pub trait UsbHost {
     /// Endpoints may specify smaller packet sizes
     fn max_host_packet_size(&self) -> u16;
 
-    fn now(&self) -> u64 {
-        self.after_millis(0)
-    }
+    fn now(&self) -> u64;
 
     /// Get current time in milliseconds
     /// The host holds the clock for all operations by drivers and the stack it belongs to
