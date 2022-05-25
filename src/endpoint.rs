@@ -1,37 +1,25 @@
 use crate::{
-    DescriptorType, DevAddress, Direction, MaxPacketSize, RequestCode, RequestRecipient,
-    TransferType, UsbError, UsbHost,
+    DescriptorType, DevAddress, Direction, HostError, MaxPacketSize, RequestCode, RequestRecipient, TransferType,
+    UsbError, UsbHost,
 };
-use hash32::Hasher;
+
+#[cfg(feature = "defmt")]
+use defmt::Formatter;
 
 pub trait ControlEndpoint: HostEndpoint {
     fn control_get_descriptor(
-        &mut self,
-        host: &mut dyn UsbHost,
-        desc_type: DescriptorType,
-        idx: u8,
-        buffer: &mut [u8],
+        &mut self, host: &mut dyn UsbHost, desc_type: DescriptorType, idx: u8, buffer: &mut [u8],
     ) -> Result<usize, UsbError>;
 
     fn control_set(
-        &mut self,
-        host: &mut dyn UsbHost,
-        code: RequestCode,
-        recip: RequestRecipient,
-        lo_val: u8,
-        hi_val: u8,
+        &mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8,
         index: u16,
-    ) -> Result<(), UsbError>;
+    ) -> Result<(), HostError>;
 
     fn control_set_class(
-        &mut self,
-        host: &mut dyn UsbHost,
-        code: RequestCode,
-        recip: RequestRecipient,
-        lo_val: u8,
-        hi_val: u8,
+        &mut self, host: &mut dyn UsbHost, code: RequestCode, recip: RequestRecipient, lo_val: u8, hi_val: u8,
         windex: u16,
-    ) -> Result<(), UsbError>;
+    ) -> Result<(), HostError>;
 }
 
 pub trait BulkEndpoint {
@@ -40,89 +28,92 @@ pub trait BulkEndpoint {
     fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError>;
 }
 
-#[derive(Debug, defmt::Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Endpoint {
     props: EpProps,
-    max_packet_size: u16,
+    max_packet_len: u16,
     toggle: bool,
-}
-
-impl hash32::Hash for Endpoint {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.props.hash(state)
-    }
 }
 
 impl Endpoint {
     pub fn from_raw(
-        device_address: DevAddress,
-        max_packet_size: u16,
-        b_endpoint_address: u8,
-        bm_attributes: u8,
+        device_address: DevAddress, max_packet_size: u16, b_endpoint_address: u8, bm_attributes: u8,
     ) -> Self {
         Endpoint {
             props: EpProps {
-                device_address,
-                endpoint_address: EpAddress::from(b_endpoint_address),
-                transfer_type: TransferType::from(bm_attributes),
+                dev_addr: device_address,
+                ep_addr: EpAddress::from(b_endpoint_address),
+                tr_type: TransferType::from(bm_attributes),
             },
-            max_packet_size,
+            max_packet_len: max_packet_size,
             toggle: false,
         }
     }
 
-    pub fn props(&self) -> &EpProps {
-        &self.props
-    }
-
     pub fn set_max_packet_size(&mut self, size: u16) {
-        self.max_packet_size = size
+        self.max_packet_len = size
     }
 
     pub fn set_device_address(&mut self, addr: DevAddress) {
-        self.props.device_address = addr
+        self.props.dev_addr = addr
     }
 }
 
 /// Read-only utility structure that captures an endpoint's static properties.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, defmt::Format, hash32_derive::Hash32)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, hash32_derive::Hash32)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(C)]
 pub struct EpProps {
-    device_address: DevAddress,
-    endpoint_address: EpAddress,
-    transfer_type: TransferType,
+    dev_addr: DevAddress,
+    ep_addr: EpAddress,
+    tr_type: TransferType,
 }
+
+// #[cfg(feature = "defmt")]
+// impl defmt::Format for EpProps {
+//     fn format(&self, fmt: Formatter) {
+//         self.dev_addr.format(fmt);
+//         self.ep_addr.format(fmt);
+//         self.tr_type.format(fmt);
+//     }
+// }
 
 impl EndpointProperties for EpProps {
     fn device_address(&self) -> DevAddress {
-        self.device_address
+        self.dev_addr
     }
 
     fn endpoint_address(&self) -> EpAddress {
-        self.endpoint_address
+        self.ep_addr
     }
 
     fn transfer_type(&self) -> TransferType {
-        self.transfer_type
+        self.tr_type
     }
 }
 
 impl EndpointProperties for Endpoint {
+    fn ep_props(&self) -> EpProps {
+        self.props
+    }
+
     fn device_address(&self) -> DevAddress {
-        self.props.device_address
+        self.props.dev_addr
     }
 
     fn endpoint_address(&self) -> EpAddress {
-        self.props.endpoint_address
+        self.props.ep_addr
     }
 
     fn transfer_type(&self) -> TransferType {
-        self.props.transfer_type
+        self.props.tr_type
     }
 }
 
 impl MaxPacketSize for Endpoint {
     fn max_packet_size(&self) -> u16 {
-        self.max_packet_size
+        self.max_packet_len
     }
 }
 
@@ -145,7 +136,8 @@ const ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 /// Max endpoint address is 0x7F - [0..63] + direction bit
 const ENDPOINT_ADDRESS_MASK: u8 = ENDPOINT_DIRECTION_MASK + ENDPOINT_NUMBER_MASK;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, defmt::Format, hash32_derive::Hash32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, hash32_derive::Hash32)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EpAddress(u8);
 
 impl EpAddress {
@@ -179,6 +171,14 @@ impl From<EpAddress> for u8 {
 impl HostEndpoint for Endpoint {}
 
 pub trait EndpointProperties {
+    fn ep_props(&self) -> EpProps {
+        EpProps {
+            dev_addr: self.device_address(),
+            ep_addr: self.endpoint_address(),
+            tr_type: self.transfer_type(),
+        }
+    }
+
     /// Address of the device owning this endpoint.rs
     fn device_address(&self) -> DevAddress;
 

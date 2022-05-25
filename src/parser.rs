@@ -1,16 +1,12 @@
 use utf16string::{WStr, LE};
 
-use crate::class::audio;
 use crate::class::audio::AudioDescriptorRef;
-use crate::descriptor::{
-    ConfigurationDescriptor, DescriptorType, EndpointDescriptor, InterfaceDescriptor,
-};
-use crate::{
-    Audio1EndpointDescriptor, DeviceClass, DeviceDescriptor, DeviceSubclass,
-    InterfaceAssociationDescriptor,
-};
+use crate::class::{audio, DeviceClass, DeviceSubclass};
+use crate::descriptor::{ConfigurationDescriptor, DescriptorType, EndpointDescriptor, InterfaceDescriptor};
+use crate::{Audio1EndpointDescriptor, DeviceDescriptor, InterfaceAssociationDescriptor};
 
-#[derive(Debug, defmt::Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DescriptorRef<'a> {
     Device(&'a DeviceDescriptor),
     Configuration(&'a ConfigurationDescriptor),
@@ -63,12 +59,10 @@ impl<'a> Iterator for DescriptorParser<'a> {
         let body_offset = unsafe { self.buf.as_ptr().add((self.pos + 2) as usize) };
 
         let desc_ref = match DescriptorType::from_repr(desc_type) {
-            Some(DescriptorType::Device) => Some(DescriptorRef::Device(unsafe {
-                &*(desc_offset as *const _)
-            })),
-            Some(DescriptorType::Configuration) => Some(DescriptorRef::Configuration(unsafe {
-                &*(desc_offset as *const _)
-            })),
+            Some(DescriptorType::Device) => Some(DescriptorRef::Device(unsafe { &*(desc_offset as *const _) })),
+            Some(DescriptorType::Configuration) => {
+                Some(DescriptorRef::Configuration(unsafe { &*(desc_offset as *const _) }))
+            }
             Some(DescriptorType::String) => Some(DescriptorRef::String(unsafe {
                 WStr::from_utf16le_unchecked(core::slice::from_raw_parts(
                     body_offset as *const _,
@@ -84,21 +78,15 @@ impl<'a> Iterator for DescriptorParser<'a> {
                 Some(DescriptorRef::Interface(ifdesc))
             }
             Some(DescriptorType::Endpoint) => match desc_len {
-                7 => Some(DescriptorRef::Endpoint(unsafe {
-                    &*(desc_offset as *const _)
-                })),
-                9 => Some(DescriptorRef::Audio1Endpoint(unsafe {
-                    &*(desc_offset as *const _)
-                })),
+                7 => Some(DescriptorRef::Endpoint(unsafe { &*(desc_offset as *const _) })),
+                9 => Some(DescriptorRef::Audio1Endpoint(unsafe { &*(desc_offset as *const _) })),
                 _ => {
                     warn!("Invalid endpoint descriptor of size {}", desc_len);
                     None
                 }
             },
             Some(DescriptorType::InterfaceAssociation) => {
-                Some(DescriptorRef::InterfaceAssociation(unsafe {
-                    &*(desc_offset as *const _)
-                }))
+                Some(DescriptorRef::InterfaceAssociation(unsafe { &*(desc_offset as *const _) }))
             }
 
             Some(DescriptorType::ClassInterface) if self.class == Some(DeviceClass::Audio) => {
@@ -116,12 +104,12 @@ impl<'a> Iterator for DescriptorParser<'a> {
                 )))
             }
 
-            Some(DescriptorType::ClassInterface) => Some(DescriptorRef::UnknownClassInterface(
-                &self.buf[self.pos..desc_next],
-            )),
-            Some(DescriptorType::ClassEndpoint) => Some(DescriptorRef::UnknownClassEndpoint(
-                &self.buf[self.pos..desc_next],
-            )),
+            Some(DescriptorType::ClassInterface) => {
+                Some(DescriptorRef::UnknownClassInterface(&self.buf[self.pos..desc_next]))
+            }
+            Some(DescriptorType::ClassEndpoint) => {
+                Some(DescriptorRef::UnknownClassEndpoint(&self.buf[self.pos..desc_next]))
+            }
 
             _ => Some(DescriptorRef::Unknown(&self.buf[self.pos..desc_next])),
         };

@@ -1,6 +1,6 @@
 use crate::{
-    AddressPool, DescriptorParser, Device, DeviceDescriptor, DeviceState, Driver,
-    EndpointProperties, HostEvent, InterfaceNum, UsbError, UsbHost,
+    AddressPool, DescriptorParser, Device, DeviceDescriptor, DeviceState, Driver, EndpointProperties, HostEvent,
+    InterfaceNum, UsbError, UsbHost,
 };
 use core::cell::RefCell;
 use heapless::Vec;
@@ -41,40 +41,32 @@ impl<H: UsbHost> UsbStack<H> {
                     self.devices
                         .push(RefCell::new((root_dev, None)))
                         .expect("USB stack could not register root device");
-                    info!("Added root device");
                 }
                 HostEvent::Reset => {
-                    // Note: root dev address will always be 1
                     for dev_drv in self.devices.iter().map(|d| d.borrow_mut()) {
-                        // let mut bor = dev_drv.borrow_mut();
-                        // let (dev, driver_idx) = bor.0;
                         if let Some(driver_idx) = dev_drv.1 {
                             let driver = &self.drivers[driver_idx as usize];
                             driver.borrow_mut().unregister(dev_drv.0.device_address());
                         }
                     }
                     self.devices.clear();
-                    debug!("USB Host Reset");
                     self.addr_pool.borrow_mut().reset();
                 }
             }
         }
 
         // Perform device upkeep
-        // for cell in &self.devices {
         for cell in &self.devices {
             if let Err(err) = self.update_dev(&mut *host, cell) {
                 let dev = &mut cell.borrow_mut().0;
-                warn!("USB Device Failed: {}, Error: {}", dev.state(), err);
+                warn!("USB Device Failed: {:?}, Error: {:?}", dev.state(), err);
                 dev.set_error(err);
             }
         }
     }
 
     pub fn update_dev(
-        &self,
-        host: &mut dyn UsbHost,
-        cell: &RefCell<(Device, Option<DriverIdx>)>,
+        &self, host: &mut dyn UsbHost, cell: &RefCell<(Device, Option<DriverIdx>)>,
     ) -> Result<(), UsbError> {
         let mut dev_drv = cell.borrow_mut();
 
@@ -84,12 +76,9 @@ impl<H: UsbHost> UsbStack<H> {
 
         match dev_drv.0.state() {
             DeviceState::SetAddress => {
-                info!("Device init");
                 let _dev_desc = self.address_dev(host, &mut dev_drv.0)?;
-                // TODO determine what happens if address set fails
-                dev_drv
-                    .0
-                    .set_state(DeviceState::SetConfig(host.after_millis(10)))
+                // what happens if address set fails?
+                dev_drv.0.set_state(DeviceState::SetConfig(host.after_millis(10)))
             }
 
             DeviceState::SetConfig(until) => {
@@ -112,7 +101,7 @@ impl<H: UsbHost> UsbStack<H> {
 
             DeviceState::Orphan => {}
 
-            // Other state is handled by driver
+            // Other states handled by driver
             _ => {
                 let driver = dev_drv.1.map(|idx| self.drivers[idx as usize].borrow_mut());
                 if let Some(mut driver) = driver {
@@ -125,10 +114,22 @@ impl<H: UsbHost> UsbStack<H> {
         Ok(())
     }
 
+    fn address_dev(&self, host: &mut dyn UsbHost, dev: &mut Device) -> Result<DeviceDescriptor, UsbError> {
+        let mut addr_pool = self.addr_pool.borrow_mut();
+        let addr = addr_pool.take_next().ok_or(UsbError::OutOfAddresses)?;
+
+        // TODO determine correct packet size to use from descriptor
+        let short_desc = dev.get_device_descriptor(host)?;
+
+        if let Err(err) = dev.set_address(host, addr) {
+            addr_pool.put_back(addr);
+            return Err(err);
+        }
+        Ok(short_desc)
+    }
+
     pub fn configure_dev(
-        &self,
-        host: &mut dyn UsbHost,
-        device: &mut Device,
+        &self, host: &mut dyn UsbHost, device: &mut Device,
     ) -> Result<Option<(DriverIdx, InterfaceNum)>, UsbError> {
         let mut buf = [0u8; 256];
         let size = device.get_configuration_descriptors(host, 0, &mut buf)?;
@@ -136,41 +137,22 @@ impl<H: UsbHost> UsbStack<H> {
         let mut desc_parser = DescriptorParser::new(&buf[0..size]);
         for (idx, driver) in self.drivers.iter().enumerate() {
             let mut driver = driver.borrow_mut();
-            if let Some((conf_num, iface_num)) = driver.accept(device, &mut desc_parser) {
+            if let Some((class, conf_num, iface_num)) = driver.accept(device, &mut desc_parser) {
                 device.set_configuration(host, conf_num)?;
                 desc_parser.rewind();
                 if let Err(err) = driver.register(device, &mut desc_parser) {
-                    warn!(
-                        "USB driver could not register device: {:?} {:?}",
-                        device, err
-                    );
+                    warn!("USB Device not registered: {:?} {:?}", device, err);
                 }
-                info!("USB Driver registered device");
+                info!(
+                    "USB Device @{:?} registered by driver '{}' for class '{:?}'",
+                    device.device_address(),
+                    driver.name(),
+                    class
+                );
                 return Ok(Some((idx as DriverIdx, iface_num)));
             }
             desc_parser.rewind();
         }
         Ok(None)
-    }
-
-    fn address_dev(
-        &self,
-        host: &mut dyn UsbHost,
-        dev: &mut Device,
-    ) -> Result<DeviceDescriptor, UsbError> {
-        let mut addr_pool = self.addr_pool.borrow_mut();
-        let addr = addr_pool
-            .take_next()
-            .ok_or(UsbError::Permanent("Out of USB addr"))?;
-        // TODO determine correct packet size to use from descriptor
-        let short_desc = dev.get_device_descriptor(host)?;
-        debug!("USB New Device Descriptor {:?}", short_desc);
-
-        if let Err(err) = dev.set_address(host, addr) {
-            addr_pool.put_back(addr);
-            return Err(err);
-        }
-        debug!("USB Device Address Set: {:?}", addr);
-        Ok(short_desc)
     }
 }

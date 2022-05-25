@@ -3,7 +3,8 @@
 use crate::class::audio::AudioDescriptorRef::Unknown;
 use crate::DescriptorType;
 
-#[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum AudioSubclass {
     AudioControl = 0x01,
@@ -11,7 +12,8 @@ pub enum AudioSubclass {
     MidiStream = 0x03,
 }
 
-#[derive(Debug, defmt::Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AudioDescriptorRef<'a> {
     ACInterfaceHeader(&'a ACInterfaceHeaderDescriptor),
     ACClockSource(&'a ACClockSourceDescriptor),
@@ -43,34 +45,22 @@ pub fn parse(subclass: Option<u8>, desc_type: DescriptorType, buf: &[u8]) -> Aud
                 DescriptorType::ClassInterface => match subclass {
                     AudioSubclass::AudioControl => match ACInterfaceSubtype::from_repr(buf[2]) {
                         Some(ACInterfaceSubtype::InterfaceHeader) => {
-                            AudioDescriptorRef::ACInterfaceHeader(unsafe {
-                                &*(buf.as_ptr() as *const _)
-                            })
+                            AudioDescriptorRef::ACInterfaceHeader(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         Some(ACInterfaceSubtype::InputTerminalDescriptor) => {
-                            AudioDescriptorRef::ACInputTerminal(unsafe {
-                                &*(buf.as_ptr() as *const _)
-                            })
+                            AudioDescriptorRef::ACInputTerminal(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         Some(ACInterfaceSubtype::OutputTerminalDescriptor) => {
-                            AudioDescriptorRef::ACOutputTerminal(unsafe {
-                                &*(buf.as_ptr() as *const _)
-                            })
+                            AudioDescriptorRef::ACOutputTerminal(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         Some(ACInterfaceSubtype::FeatureUnitDescriptor) => {
-                            AudioDescriptorRef::ACFeatureUnit(unsafe {
-                                &*(buf.as_ptr() as *const _)
-                            })
+                            AudioDescriptorRef::ACFeatureUnit(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         Some(ACInterfaceSubtype::ClockSourceDescriptor) => {
-                            AudioDescriptorRef::ACClockSource(unsafe {
-                                &*(buf.as_ptr() as *const _)
-                            })
+                            AudioDescriptorRef::ACClockSource(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         Some(ACInterfaceSubtype::ClockSelectorDescriptor) => {
-                            AudioDescriptorRef::ACClockSelector(unsafe {
-                                &*(buf.as_ptr() as *const _)
-                            })
+                            AudioDescriptorRef::ACClockSelector(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         _ => Unknown(buf),
                     },
@@ -79,9 +69,7 @@ pub fn parse(subclass: Option<u8>, desc_type: DescriptorType, buf: &[u8]) -> Aud
                             AudioDescriptorRef::ASInterface(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         Some(ASInterfaceSubtype::FormatType1) => {
-                            AudioDescriptorRef::ASFormatType1(unsafe {
-                                &*(buf.as_ptr() as *const _)
-                            })
+                            AudioDescriptorRef::ASFormatType1(unsafe { &*(buf.as_ptr() as *const _) })
                         }
                         _ => Unknown(buf),
                     },
@@ -120,7 +108,8 @@ pub fn parse(subclass: Option<u8>, desc_type: DescriptorType, buf: &[u8]) -> Aud
     Unknown(buf)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ACInterfaceSubtype {
     InterfaceHeader = 0x01,
@@ -131,7 +120,8 @@ pub enum ACInterfaceSubtype {
     ClockSelectorDescriptor = 0x0B,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ACInterfaceHeaderDescriptor {
     pub b_length: u8,
@@ -143,7 +133,8 @@ pub struct ACInterfaceHeaderDescriptor {
     pub bm_controls: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ACClockSourceDescriptor {
     pub b_length: u8,
@@ -156,7 +147,8 @@ pub struct ACClockSourceDescriptor {
     pub i_clock_source: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ACClockSelectorDescriptor {
     pub b_length: u8,
@@ -169,7 +161,8 @@ pub struct ACClockSelectorDescriptor {
     pub i_clock_selector: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ACFeatureUnitDescriptor {
     pub b_length: u8,
@@ -185,7 +178,8 @@ pub struct ACFeatureUnitDescriptor {
     pub i_feature: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ACInputTerminalDescriptor {
     pub b_length: u8,
@@ -202,7 +196,8 @@ pub struct ACInputTerminalDescriptor {
     pub i_terminal: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ACOutputTerminalDescriptor {
     pub b_length: u8,
@@ -219,14 +214,16 @@ pub struct ACOutputTerminalDescriptor {
 
 // Audio Stream
 
-#[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ASInterfaceSubtype {
     AudioStreamHeader = 0x01,
     FormatType1 = 0x02,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ASInterfaceDescriptor {
     pub b_length: u8,
@@ -241,7 +238,8 @@ pub struct ASInterfaceDescriptor {
     pub i_channel_names: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ASFormatType1Descriptor {
     pub b_length: u8,
@@ -252,13 +250,15 @@ pub struct ASFormatType1Descriptor {
     pub b_bit_resolution: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ASEndpointSubtype {
     IsochronousEndpoint = 0x01,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ASEndpointDescriptor {
     pub b_length: u8,
@@ -272,7 +272,8 @@ pub struct ASEndpointDescriptor {
 
 // MIDI Stream
 
-#[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum MSInterfaceSubtype {
     MsHeader = 0x01,
@@ -281,7 +282,8 @@ pub enum MSInterfaceSubtype {
     Element = 0x04,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct MSInterfaceDescriptor {
     pub b_length: u8,
@@ -291,7 +293,8 @@ pub struct MSInterfaceDescriptor {
     pub w_total_length: u16,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct MSInJackDescriptor {
     pub b_length: u8,
@@ -302,7 +305,8 @@ pub struct MSInJackDescriptor {
     pub i_jack: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct MSOutJackDescriptor {
     pub b_length: u8,
@@ -316,18 +320,22 @@ pub struct MSOutJackDescriptor {
     pub i_jack: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum JackType {
     Embedded = 1,
     External = 2,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, defmt::Format, strum_macros::FromRepr)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum MSEndpointSubtype {
     BulkEndpoint = 0x01,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct MSEndpointDescriptor {
     pub b_length: u8,

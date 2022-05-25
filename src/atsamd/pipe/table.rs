@@ -22,11 +22,7 @@ impl PipeTable {
         Self { tbl }
     }
 
-    pub(crate) fn pipe_for<'a, 'b>(
-        &'a mut self,
-        host: &'b mut usb::HOST,
-        endpoint: &dyn HostEndpoint,
-    ) -> Pipe<'a, 'b> {
+    pub(crate) fn pipe_for<'a, 'b>(&'a mut self, host: &'b mut usb::HOST, endpoint: &dyn HostEndpoint) -> Pipe<'a, 'b> {
         let pipe_idx = if endpoint.endpoint_address().absolute() == 0 { 0 } else { 1 };
 
         let pregs = PipeRegs::from(host, pipe_idx);

@@ -1,13 +1,12 @@
 use heapless::{FnvIndexMap, Vec};
 
 use crate::{
-    map_entry_mut, ConfigNum, DescriptorParser, DescriptorRef, DevAddress, Device, Direction,
-    Driver, Endpoint, EndpointProperties, EpProps, InterfaceDescriptor, InterfaceNum,
-    MaxPacketSize, UsbError, UsbHost,
+    map_entry_mut, ConfigNum, DescriptorParser, DescriptorRef, DevAddress, Device, DeviceClass, Direction, Driver,
+    Endpoint, EndpointProperties, EpProps, InterfaceNum, MaxPacketSize, UsbError, UsbHost,
 };
 use embedded_midi::{MidiPorts, PacketParser, PortHandle, PortId, PortInfo};
 
-use crate::audio::JackType;
+use crate::audio::{AudioSubclass, JackType};
 use crate::class::audio::AudioDescriptorRef;
 
 // How long to wait before talking to the device again after setting
@@ -28,16 +27,6 @@ const MAX_ENDPOINTS: usize = MAX_MIDI_DEVICES * MAX_ENDPOINTS_PER_DEV;
 
 pub const USB_MIDI_PACKET_LEN: usize = 4;
 
-pub const USB_CLASS_NONE: u8 = 0x00;
-pub const USB_AUDIO_CLASS: u8 = 0x01;
-pub const USB_AUDIO_CONTROL_SUBCLASS: u8 = 0x01;
-pub const USB_MIDI_STREAMING_SUBCLASS: u8 = 0x03;
-
-fn is_midi_interface(idesc: &InterfaceDescriptor) -> bool {
-    idesc.b_interface_class == USB_AUDIO_CLASS
-        && idesc.b_interface_sub_class == USB_MIDI_STREAMING_SUBCLASS
-}
-
 type JackId = u8;
 
 pub struct UsbMidiDriver {
@@ -45,15 +34,10 @@ pub struct UsbMidiDriver {
     with_midi: fn(&mut dyn FnMut(&mut (dyn MidiPorts + Send + Sync))),
 
     /// Keep track of endpoints for each device
-    device_endpoints:
-    FnvIndexMap<DevAddress, Vec<Endpoint, MAX_ENDPOINTS_PER_DEV>, MAX_MIDI_DEVICES>,
+    device_endpoints: FnvIndexMap<DevAddress, Vec<Endpoint, MAX_ENDPOINTS_PER_DEV>, MAX_MIDI_DEVICES>,
 
     /// Keep track of jacks & ports for each endpoint
-    ep_jack_port: FnvIndexMap<
-        EpProps,
-        FnvIndexMap<JackId, PortHandle, MAX_JACKS_PER_ENDPOINT>,
-        MAX_ENDPOINTS,
-    >,
+    ep_jack_port: FnvIndexMap<EpProps, FnvIndexMap<JackId, PortHandle, MAX_JACKS_PER_ENDPOINT>, MAX_ENDPOINTS>,
 
     next_port_id: usize,
 }
@@ -77,18 +61,16 @@ impl UsbMidiDriver {
         (self.with_midi)(
             &mut move |midi: &mut (dyn MidiPorts + Send + Sync)| match midi.acquire_port(info) {
                 Ok(handle) => {
-                    if let Some(jack_ports) =
-                    map_entry_mut(&mut self.ep_jack_port, *ep, || FnvIndexMap::new())
-                    {
+                    if let Some(jack_ports) = map_entry_mut(&mut self.ep_jack_port, *ep, || FnvIndexMap::new()) {
                         if let Err(err) = jack_ports.insert(jack_id, handle) {
-                            warn!("TooManyPorts: {}", err)
+                            warn!("TooManyPorts: {:?}", err)
                         }
                     } else {
                         warn!("TooManyEndpoints")
                     }
                 }
                 Err(err) => {
-                    warn!("MIDI Ports error: {}", err)
+                    warn!("MIDI Ports error: {:?}", err)
                 }
             },
         );
@@ -105,11 +87,13 @@ impl From<Direction> for embedded_midi::PortDirection {
 }
 
 impl Driver for UsbMidiDriver {
+    fn name(&self) -> &str {
+        "Midi"
+    }
+
     fn accept(
-        &self,
-        _device: &mut Device,
-        parser: &mut DescriptorParser,
-    ) -> Option<(ConfigNum, InterfaceNum)> {
+        &self, _device: &mut Device, parser: &mut DescriptorParser,
+    ) -> Option<(DeviceClass, ConfigNum, InterfaceNum)> {
         let mut config = None;
         let mut midi_interface = None;
 
@@ -117,7 +101,9 @@ impl Driver for UsbMidiDriver {
             match desc {
                 DescriptorRef::Configuration(cdesc) => config = Some(cdesc),
                 DescriptorRef::Interface(idesc) => {
-                    if is_midi_interface(idesc) {
+                    if idesc.b_interface_class == DeviceClass::Audio as u8
+                        && idesc.b_interface_sub_class == AudioSubclass::MidiStream as u8
+                    {
                         if midi_interface.is_some() {
                             // new interface, done enumerating MIDI endpoints
                             warn!("Second MIDI interface found");
@@ -132,37 +118,27 @@ impl Driver for UsbMidiDriver {
 
         if let Some(iface) = midi_interface {
             if let Some(cfg) = config {
-                return Some((cfg.b_configuration_value, iface.b_interface_number));
+                return Some((DeviceClass::Audio, cfg.b_configuration_value, iface.b_interface_number));
             }
         }
         None
     }
 
-    fn register(
-        &mut self,
-        device: &mut Device,
-        parser: &mut DescriptorParser,
-    ) -> Result<(), UsbError> {
+    fn register(&mut self, device: &mut Device, parser: &mut DescriptorParser) -> Result<(), UsbError> {
         let mut ep_in: Option<EpProps> = None;
         let mut ep_out: Option<EpProps> = None;
 
         let dev_addr = device.device_address();
 
-        let mut register_ep = |dev_addr,
-                               max_packet_size: u16,
-                               b_endpoint_address: u8,
-                               bm_attributes: u8| {
-            let new_ep =
-                Endpoint::from_raw(dev_addr, max_packet_size, b_endpoint_address, bm_attributes);
+        let mut register_ep = |dev_addr, max_packet_size: u16, b_endpoint_address: u8, bm_attributes: u8| {
+            let new_ep = Endpoint::from_raw(dev_addr, max_packet_size, b_endpoint_address, bm_attributes);
             if let Some(prev_ep) = match new_ep.direction() {
-                Direction::Out => ep_out.replace(new_ep.props().clone()),
-                Direction::In => ep_in.replace(new_ep.props().clone()),
+                Direction::Out => ep_out.replace(new_ep.ep_props().clone()),
+                Direction::In => ep_in.replace(new_ep.ep_props().clone()),
             } {
-                warn!("More than one endpoint for device {}", prev_ep)
+                warn!("More than one endpoint for device {:?}", prev_ep)
             }
-            if let Some(endpoints) =
-            map_entry_mut(&mut self.device_endpoints, dev_addr, || Vec::new())
-            {
+            if let Some(endpoints) = map_entry_mut(&mut self.device_endpoints, dev_addr, || Vec::new()) {
                 if !endpoints.push(new_ep).is_ok() {
                     warn!("Too many endpoints for device")
                 }
@@ -174,18 +150,12 @@ impl Driver for UsbMidiDriver {
         // phase 1 - identify interface and endpoints
         while let Some(desc) = parser.next() {
             match desc {
-                DescriptorRef::Endpoint(edesc) => register_ep(
-                    dev_addr,
-                    edesc.max_packet_size(),
-                    edesc.b_endpoint_address,
-                    edesc.bm_attributes,
-                ),
-                DescriptorRef::Audio1Endpoint(edesc) => register_ep(
-                    dev_addr,
-                    edesc.max_packet_size(),
-                    edesc.b_endpoint_address,
-                    edesc.bm_attributes,
-                ),
+                DescriptorRef::Endpoint(edesc) => {
+                    register_ep(dev_addr, edesc.max_packet_size(), edesc.b_endpoint_address, edesc.bm_attributes)
+                }
+                DescriptorRef::Audio1Endpoint(edesc) => {
+                    register_ep(dev_addr, edesc.max_packet_size(), edesc.b_endpoint_address, edesc.bm_attributes)
+                }
                 _ => {}
             }
         }
@@ -217,11 +187,9 @@ impl Driver for UsbMidiDriver {
     fn unregister(&mut self, address: DevAddress) {
         if let Some(endpoints) = self.device_endpoints.remove(&address) {
             for ep in endpoints {
-                if let Some(jack_handle) = self.ep_jack_port.remove(ep.props()) {
+                if let Some(jack_handle) = self.ep_jack_port.remove(&ep.ep_props()) {
                     for handle in jack_handle.values() {
-                        (self.with_midi)(&mut |midi: &mut (dyn MidiPorts + Send + Sync)| {
-                            midi.release_port(handle)
-                        })
+                        (self.with_midi)(&mut |midi: &mut (dyn MidiPorts + Send + Sync)| midi.release_port(handle))
                     }
                 }
             }
@@ -236,7 +204,7 @@ impl Driver for UsbMidiDriver {
                 .iter_mut()
                 .flat_map(|eps| eps.iter_mut())
             {
-                if let Some(jack_port) = self.ep_jack_port.get_mut(ep.props()) {
+                if let Some(jack_port) = self.ep_jack_port.get_mut(&ep.ep_props()) {
                     match ep.direction() {
                         Direction::Out => {
                             // sent packets are edited with the cable_num / jack_id of their MIDI port
@@ -252,7 +220,7 @@ impl Driver for UsbMidiDriver {
                                             }
                                         }
                                         Err(err) => {
-                                            warn!("Failed to write to MIDI port: {}", err);
+                                            warn!("Failed to write to MIDI port: {:?}", err);
                                             break;
                                         }
                                     }
@@ -262,30 +230,20 @@ impl Driver for UsbMidiDriver {
                         Direction::In => {
                             // received packets are dispatched to ports according to their cable_num / jack_id
                             let mut buf = [0; 64];
-
-                            debug!("IN from ep {:?}", ep);
                             match host.in_transfer(ep, &mut buf) {
-                                Ok(0) => {}
+                                Ok(0) => {
+                                    debug!("USB MIDI Zero bytes in")
+                                }
                                 Ok(len) => {
                                     let mut pp = PacketParser::default();
                                     for b in &buf[..len] {
                                         match pp.advance(*b) {
                                             // TODO receive all packets at once
                                             Ok(Some(packet)) => {
-                                                if let Some(port_handle) =
-                                                jack_port.get(&packet.cable_number())
-                                                {
-                                                    debug!(
-                                                        "PACKET from jack {:?}",
-                                                        packet.cable_number()
-                                                    );
-                                                    if let Err(err) =
-                                                    midi.write(port_handle, packet)
-                                                    {
-                                                        warn!(
-                                                            "Failed to read from MIDI port: {}",
-                                                            err
-                                                        );
+                                                if let Some(port_handle) = jack_port.get(&packet.cable_number()) {
+                                                    debug!("PACKET from jack {:?}", packet.cable_number());
+                                                    if let Err(err) = midi.write(port_handle, packet) {
+                                                        warn!("Failed to read from MIDI port: {:?}", err);
                                                     }
                                                 }
                                             }

@@ -26,7 +26,8 @@ hash32-derive = "0.1"
 static_assertions = "1.1.0"
 
 # TODO make defmt & hash32 optional
-defmt = "0.3"
+defmt = { version = "0.3", optional = true}
+log = { version = "0.4", optional = true }
 
 # TODO make USB descriptor string handling optional
 utf16string = { git = "https://github.com/fralalonde/utf16string.git", branch = "defmt", default-features = false, features = ["defmt"] }
@@ -38,11 +39,12 @@ embedded-midi = { git = "https://github.com/fralalonde/embedded-midi.git", branc
 #embedded-midi = { path = "../embedded-midi", features = ["defmt"] }
 
 [features]
-# TODO make these crates optional
-defmt = []
+default = ["defmt"]
+# either defmt or log must be specified
+log = ["dep:log"]
+defmt = ["dep:defmt"]
 
 atsamd = ["atsamd-hal"]
-stm32f411 = [ "stm32f4xx-hal/stm32f411", "stm32f4xx-hal/usb_fs"]
 
 samd11c = ["atsamd", "atsamd-hal/samd11c"]
 samd21e = ["atsamd", "atsamd-hal/samd21e"]
@@ -60,3 +62,5 @@ same53n = ["atsamd", "atsamd-hal/same53n"]
 same54n = ["atsamd", "atsamd-hal/same54n"]
 same54p = ["atsamd", "atsamd-hal/same54p"]
 
+# TODO add more STM32 targets
+stm32f411 = [ "stm32f4xx-hal/stm32f411", "stm32f4xx-hal/usb_fs"]

@@ -11,7 +11,8 @@ use crate::MaxPacketSize;
 use core::convert::TryFrom;
 use core::mem;
 
-#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr, defmt::Format)]
+#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum DescriptorType {
     Device = 1,
@@ -61,37 +62,8 @@ impl TryFrom<u8> for DescriptorType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, strum_macros::FromRepr, defmt::Format)]
-#[repr(u8)]
-pub enum DeviceClass {
-    FromInterface = 0x0,
-    Audio = 0x01,
-    Cdc = 0x02,
-    Hid = 0x03,
-    Physical = 0x05,
-    Imaging = 0x06,
-    Printer = 0x07,
-    MassStorage = 0x08,
-    Hub = 0x09,
-    CdcData = 0x0A,
-    SmartCard = 0x0B,
-    ContentSecurity = 0x0D,
-    Video = 0x0E,
-    PersonalHealthcare = 0x0F,
-    AudioVideo = 0x10,
-    Billboard = 0x11,
-    UsbTypeCBridge = 0x12,
-    I3C = 0x30,
-    Diagnostic = 0xDC,
-    WirelessController = 0xE0,
-    Misc = 0xEF,
-    ApplicationSpecific = 0xFE,
-    VendorSpecific = 0xFF,
-}
-
-pub type DeviceSubclass = u8;
-
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct DeviceDescriptor {
     pub b_length: u8,
@@ -131,7 +103,8 @@ impl Default for DeviceDescriptor {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct ConfigurationDescriptor {
     pub b_length: u8,
@@ -159,11 +132,12 @@ impl Default for ConfigurationDescriptor {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct InterfaceDescriptor {
     pub b_length: u8,
-    pub b_descriptor_type: DescriptorType,
+    pub b_descriptor_type: u8,
     pub b_interface_number: u8,
     pub b_alternate_setting: u8,
     pub b_num_endpoints: u8,
@@ -173,11 +147,12 @@ pub struct InterfaceDescriptor {
     pub i_interface: u8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct InterfaceAssociationDescriptor {
     pub b_length: u8,
-    pub b_descriptor_type: DescriptorType,
+    pub b_descriptor_type: u8,
     pub b_first_interface: u8,
     pub b_interface_count: u8,
     pub b_function_class: u8,
@@ -186,7 +161,8 @@ pub struct InterfaceAssociationDescriptor {
     pub i_function: i8,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct EndpointDescriptor {
     pub b_length: u8,
@@ -206,7 +182,8 @@ impl MaxPacketSize for EndpointDescriptor {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct Audio1EndpointDescriptor {
     pub b_length: u8,
@@ -224,6 +201,7 @@ pub struct Audio1EndpointDescriptor {
 
 impl MaxPacketSize for Audio1EndpointDescriptor {
     fn max_packet_size(&self) -> u16 {
+        // self.w_max_packet_size
         ((self.w_max_packet_size_hi as u16) << 8) + self.w_max_packet_size_lo as u16
     }
 }
@@ -232,9 +210,9 @@ impl MaxPacketSize for Audio1EndpointDescriptor {
 mod test {
     use super::*;
 
+    use crate::assert_offset;
     use core::mem;
     use core::slice;
-    use crate::assert_offset;
 
     #[test]
     fn device_descriptor_layout() {
@@ -270,17 +248,11 @@ mod test {
         assert_offset("i_manufacturer", &desc.i_manufacturer, base, 0x0e);
         assert_offset("i_product", &desc.i_product, base, 0x0f);
         assert_offset("i_serial_number", &desc.i_serial_number, base, 0x10);
-        assert_offset(
-            "b_num_configurations",
-            &desc.b_num_configurations,
-            base,
-            0x011,
-        );
+        assert_offset("b_num_configurations", &desc.b_num_configurations, base, 0x011);
 
         let got = unsafe { slice::from_raw_parts(&desc as *const _ as *const u8, len) };
         let want = &[
-            0x12, 0x01, 0x01, 0x10, 0xaa, 0xbb, 0xcc, 0xdd, 0xad, 0xde, 0xef, 0xbe, 0x0d, 0xf0,
-            0x11, 0x22, 0x33, 0x44,
+            0x12, 0x01, 0x01, 0x10, 0xaa, 0xbb, 0xcc, 0xdd, 0xad, 0xde, 0xef, 0xbe, 0x0d, 0xf0, 0x11, 0x22, 0x33, 0x44,
         ];
         assert_eq!(got, want);
     }
@@ -304,12 +276,7 @@ mod test {
         assert_offset("b_descriptor_type", &desc.b_descriptor_type, base, 0x01);
         assert_offset("w_total_length", &desc.w_total_length, base, 0x02);
         assert_offset("b_num_interfaces", &desc.b_num_interfaces, base, 0x04);
-        assert_offset(
-            "b_configuration_value",
-            &desc.b_configuration_value,
-            base,
-            0x05,
-        );
+        assert_offset("b_configuration_value", &desc.b_configuration_value, base, 0x05);
         assert_offset("i_configuration", &desc.i_configuration, base, 0x06);
         assert_offset("bm_attributes", &desc.bm_attributes, base, 0x07);
         assert_offset("b_max_power", &desc.b_max_power, base, 0x08);
@@ -341,18 +308,8 @@ mod test {
         assert_offset("b_alternate_setting", &desc.b_alternate_setting, base, 0x03);
         assert_offset("b_num_endpoints", &desc.b_num_endpoints, base, 0x04);
         assert_offset("b_interface_class", &desc.b_interface_class, base, 0x05);
-        assert_offset(
-            "b_interface_sub_class",
-            &desc.b_interface_sub_class,
-            base,
-            0x06,
-        );
-        assert_offset(
-            "b_interface_protocol",
-            &desc.b_interface_protocol,
-            base,
-            0x07,
-        );
+        assert_offset("b_interface_sub_class", &desc.b_interface_sub_class, base, 0x06);
+        assert_offset("b_interface_protocol", &desc.b_interface_protocol, base, 0x07);
         assert_offset("i_interface", &desc.i_interface, base, 0x08);
 
         let got = unsafe { slice::from_raw_parts(&desc as *const _ as *const u8, len) };

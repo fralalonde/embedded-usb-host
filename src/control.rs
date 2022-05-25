@@ -139,9 +139,9 @@ const_assert!(mem::size_of::<SetupPacket>() == 8);
 mod test {
     use super::*;
 
+    use crate::assert_offset;
     use core::mem;
     use core::slice;
-    use crate::assert_offset;
 
     #[test]
     fn setup_packet_layout() {

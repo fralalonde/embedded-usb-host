@@ -16,6 +16,7 @@ pub mod status_pipe;
 pub mod table;
 
 use addr::Addr;
+use core::cmp::min;
 use ctrl_pipe::CtrlPipe;
 use ext_reg::ExtReg;
 use pck_size::PckSize;
@@ -23,11 +24,10 @@ use status_bk::StatusBk;
 use status_pipe::StatusPipe;
 
 use crate::{
-    to_slice_mut, HostEndpoint, RequestCode, RequestDirection, RequestType, SetupPacket,
-    TransferType, WValue,
+    to_slice_mut, HostEndpoint, RequestCode, RequestDirection, RequestType, SetupPacket, TransferType, WValue,
 };
 
-use crate::atsamd::error::PipeErr;
+use crate::HostError;
 use regs::PipeRegs;
 
 // Maximum time to wait for a control request with data to finish. cf §9.2.6.1 of USB 2.0.
@@ -48,15 +48,9 @@ pub(crate) struct Pipe<'a, 'b> {
 impl Pipe<'_, '_> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_transfer(
-        &mut self,
-        ep: &mut dyn HostEndpoint,
-        bm_request_type: RequestType,
-        b_request: RequestCode,
-        w_value: WValue,
-        w_index: u16,
-        buf: Option<&mut [u8]>,
-        after_millis: fn(u64) -> u64,
-    ) -> Result<usize, PipeErr> {
+        &mut self, ep: &mut dyn HostEndpoint, bm_request_type: RequestType, b_request: RequestCode, w_value: WValue,
+        w_index: u16, buf: Option<&mut [u8]>, after_millis: fn(u64) -> u64,
+    ) -> Result<usize, HostError> {
         let buflen = buf.as_ref().map_or(0, |b| b.len() as u16);
         let mut setup_packet = SetupPacket {
             bm_request_type,
@@ -65,14 +59,11 @@ impl Pipe<'_, '_> {
             w_index,
             w_length: buflen,
         };
-        self.send(
-            ep,
-            PipeToken::Setup,
-            to_slice_mut(&mut setup_packet),
-            after_millis,
-        )?;
 
-        let direction = bm_request_type.direction().ok_or(PipeErr::InvalidRequest)?;
+        self.bank0_set(to_slice_mut(&mut setup_packet), 0, ep.max_packet_size());
+        self.sync_tx(ep, PipeToken::Setup, after_millis)?;
+
+        let direction = bm_request_type.direction().ok_or(HostError::InvalidRequest)?;
         let mut transfer_len = 0;
 
         if let Some(buf) = buf {
@@ -94,103 +85,64 @@ impl Pipe<'_, '_> {
         Ok(transfer_len)
     }
 
-    fn bank0_size(&mut self, len: usize) {
+    fn bank0_size(&mut self, len: u16) {
         self.desc.bank0.pcksize.modify(|_, w| {
-            unsafe { w.byte_count().bits(len as u16) };
+            unsafe { w.byte_count().bits(len) };
             unsafe { w.multi_packet_size().bits(0) }
         });
     }
 
-    fn send(
-        &mut self,
-        ep: &mut dyn HostEndpoint,
-        token: PipeToken,
-        buf: &mut [u8],
-        after_millis: fn(u64) -> u64,
-    ) -> Result<(), PipeErr> {
+    fn bank0_set(&mut self, buf: &[u8], offset: usize, max_pck: u16) {
+        // start address
         self.desc
             .bank0
             .addr
-            .write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32) });
-        self.bank0_size(buf.len());
-        self.sync_tx(ep, token, after_millis)
+            .write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32 + offset as u32) });
+        // max length
+        let max_len = min(max_pck, (buf.len() - offset) as u16);
+        self.bank0_size(max_len);
+        // start transfer
+        self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
     }
 
     pub fn in_transfer(
-        &mut self,
-        ep: &mut dyn HostEndpoint,
-        buf: &mut [u8],
-        after_millis: fn(u64) -> u64,
-    ) -> Result<usize, PipeErr> {
-        // TODO: pull this from pipe descriptor for this addr/ep.
-        let packet_size = 8;
-        self.bank0_size(buf.len());
-
-        let mut bytes_received = 0;
-        while bytes_received < buf.len() {
-            // Move the buffer pointer forward as we get data.
-            self.desc.bank0.addr.write(|w| unsafe {
-                w.addr().bits(buf.as_mut_ptr() as u32 + bytes_received as u32)
-            });
-            self.regs.statusclr.write(|w| w.bk0rdy().set_bit());
-
+        &mut self, ep: &mut dyn HostEndpoint, buf: &mut [u8], after_millis: fn(u64) -> u64,
+    ) -> Result<usize, HostError> {
+        let mut total: usize = 0;
+        while total < buf.len() {
+            self.bank0_set(buf, total, ep.max_packet_size());
             self.sync_tx(ep, PipeToken::In, after_millis)?;
             let recvd = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
-            bytes_received += recvd;
-            if recvd < packet_size {
+            total += recvd;
+            if recvd < ep.max_packet_size() as usize {
                 break;
             }
-
-            // Don't allow writing past the buffer.
-            assert!(bytes_received <= buf.len());
         }
-
-        self.regs.statusset.write(|w| w.pfreeze().set_bit());
-        if bytes_received < buf.len() {
-            Err(PipeErr::ShortPacket)
-        } else {
-            Ok(bytes_received)
-        }
+        assert!(total <= buf.len());
+        Ok(total)
     }
 
     pub fn out_transfer(
-        &mut self,
-        ep: &mut dyn HostEndpoint,
-        buf: &[u8],
-        after_millis: fn(u64) -> u64,
-    ) -> Result<usize, PipeErr> {
-        self.bank0_size(buf.len());
-
-        let mut bytes_sent = 0;
-        while bytes_sent < buf.len() {
-            self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32 + bytes_sent as u32) });
+        &mut self, ep: &mut dyn HostEndpoint, buf: &[u8], after_millis: fn(u64) -> u64,
+    ) -> Result<usize, HostError> {
+        let mut total = 0;
+        while total < buf.len() {
+            self.bank0_set(&buf, total, ep.max_packet_size());
+            // self.desc.bank0.addr.write(|w| unsafe { w.addr().bits(buf.as_ptr() as u32 + total as u32) });
             self.sync_tx(ep, PipeToken::Out, after_millis)?;
-
-            let sent = self.desc.bank0.pcksize.read().byte_count().bits() as usize;
-            bytes_sent += sent;
-            trace!("!! wrote {} of {}", bytes_sent, buf.len());
+            total += self.desc.bank0.pcksize.read().byte_count().bits() as usize;
         }
-
-        Ok(bytes_sent)
+        Ok(total)
     }
 
     fn data_toggle(&mut self, ep: &mut dyn HostEndpoint, token: PipeToken) {
         let toggle = match token {
-            PipeToken::In => {
+            PipeToken::In | PipeToken::Out => {
                 let t = !ep.toggle();
                 ep.set_toggle(t);
                 t
             }
-
-            PipeToken::Out => {
-                let t = !ep.toggle();
-                ep.set_toggle(t);
-                t
-            }
-
             PipeToken::Setup => false,
-
-            _ => !self.regs.status.read().dtgl().bit_is_set(),
         };
 
         if toggle {
@@ -212,19 +164,16 @@ impl Pipe<'_, '_> {
     // this just take the current timestamp, we can make this
     // non-blocking.
     fn sync_tx(
-        &mut self,
-        ep: &mut dyn HostEndpoint,
-        token: PipeToken,
-        after_millis: fn(u64) -> u64,
-    ) -> Result<(), PipeErr> {
+        &mut self, ep: &mut dyn HostEndpoint, token: PipeToken, after_millis: fn(u64) -> u64,
+    ) -> Result<(), HostError> {
         self.dispatch_packet(ep, token);
 
         let until = after_millis(USB_TIMEOUT);
-        // let mut last_err = PipeErr::SWTimeout;
+        // let mut last_err = TransferError::SWTimeout;
         let mut naks = 0;
         loop {
             if after_millis(0) > until {
-                return Err(PipeErr::SoftwareTimeout);
+                return Err(HostError::SoftTimeout);
             }
 
             let res = self.dispatch_result(token);
@@ -240,14 +189,14 @@ impl Pipe<'_, '_> {
 
                 Err(err) => {
                     match err {
-                        PipeErr::DataToggle => self.data_toggle(ep, token),
+                        HostError::Toggle => self.data_toggle(ep, token),
 
                         // Flow error on interrupt pipes means we got a NAK = no data
-                        PipeErr::Flow if matches!(ep.transfer_type(), TransferType::Interrupt) => {
-                            return Err(PipeErr::Flow);
+                        HostError::Nak if matches!(ep.transfer_type(), TransferType::Interrupt) => {
+                            return Err(HostError::Nak);
                         }
 
-                        PipeErr::Stall => return Err(PipeErr::Stall),
+                        HostError::Stall => return Err(HostError::Stall),
 
                         _any => {
                             naks += 1;
@@ -294,28 +243,28 @@ impl Pipe<'_, '_> {
                     self.dtgl_clear();
                 }
             }
-            _ => {}
         }
-
+        // unfreeze pipe -> transfer starts
         self.regs.statusclr.write(|w| w.pfreeze().set_bit());
     }
 
-    fn dispatch_result(&mut self, token: PipeToken) -> Result<bool, PipeErr> {
+    fn dispatch_result(&mut self, token: PipeToken) -> Result<bool, HostError> {
         if self.is_transfer_complete(token) {
+            // transfer complete -> freeze pipe
             self.regs.statusset.write(|w| w.pfreeze().set_bit());
             Ok(true)
         } else if self.desc.bank0.status_bk.read().errorflow().bit_is_set() {
-            Err(PipeErr::Flow)
+            Err(HostError::Nak)
         } else if self.desc.bank0.status_pipe.read().touter().bit_is_set() {
-            Err(PipeErr::HardwareTimeout)
+            Err(HostError::HardTimeout)
         } else if self.desc.bank0.status_pipe.read().dtgler().bit_is_set() {
-            Err(PipeErr::DataToggle)
+            Err(HostError::Toggle)
         } else if self.regs.intflag.read().stall().bit_is_set() {
             self.regs.intflag.write(|w| w.stall().set_bit());
-            Err(PipeErr::Stall)
+            Err(HostError::Stall)
         } else if self.regs.intflag.read().trfail().bit_is_set() {
             self.regs.intflag.write(|w| w.trfail().set_bit());
-            Err(PipeErr::TransferFail)
+            Err(HostError::Fail)
         } else {
             // Nothing wrong, but not done yet.
             Ok(false)
@@ -324,23 +273,26 @@ impl Pipe<'_, '_> {
 
     fn is_transfer_complete(&mut self, token: PipeToken) -> bool {
         match token {
-            PipeToken::Setup =>
+            PipeToken::Setup => {
                 if self.regs.intflag.read().txstp().bit_is_set() {
                     self.regs.intflag.write(|w| w.txstp().set_bit());
                     return true;
                 }
-            PipeToken::In | PipeToken::Out =>
+            }
+            PipeToken::In | PipeToken::Out => {
                 if self.regs.intflag.read().trcpt0().bit_is_set() {
                     self.regs.intflag.write(|w| w.trcpt0().set_bit());
                     return true;
                 }
+            }
         }
         false
     }
 }
 
 // TODO: merge into SVD for pipe cfg register.
-#[derive(Copy, Clone, Debug, PartialEq, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub(crate) enum PipeToken {
     Setup = 0x0,
     In = 0x1,
@@ -428,21 +380,9 @@ mod test {
         assert_eq!(core::mem::size_of::<Addr>(), 4, "Addr register size.");
         assert_eq!(core::mem::size_of::<PckSize>(), 4, "PckSize register size.");
         assert_eq!(core::mem::size_of::<ExtReg>(), 2, "ExtReg register size.");
-        assert_eq!(
-            core::mem::size_of::<StatusBk>(),
-            1,
-            "StatusBk register size."
-        );
-        assert_eq!(
-            core::mem::size_of::<CtrlPipe>(),
-            2,
-            "CtrlPipe register size."
-        );
-        assert_eq!(
-            core::mem::size_of::<StatusPipe>(),
-            1,
-            "StatusPipe register size."
-        );
+        assert_eq!(core::mem::size_of::<StatusBk>(), 1, "StatusBk register size.");
+        assert_eq!(core::mem::size_of::<CtrlPipe>(), 2, "CtrlPipe register size.");
+        assert_eq!(core::mem::size_of::<StatusPipe>(), 1, "StatusPipe register size.");
 
         // addr at 0x00 for 4
         // pcksize at 0x04 for 4
@@ -450,11 +390,7 @@ mod test {
         // status_bk at 0x0a for 2
         // ctrl_pipe at 0x0c for 2
         // status_pipe at 0x0e for 1
-        assert_eq!(
-            core::mem::size_of::<BankDesc>(),
-            16,
-            "Bank descriptor size."
-        );
+        assert_eq!(core::mem::size_of::<BankDesc>(), 16, "Bank descriptor size.");
     }
 
     #[test]

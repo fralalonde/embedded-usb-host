@@ -1,4 +1,4 @@
-use crate::{ HostEndpoint, HostEvent, RequestCode, RequestType, UsbError, UsbHost, WValue};
+use crate::{HostEndpoint, HostError, HostEvent, RequestCode, RequestType, UsbError, UsbHost, WValue};
 
 use crate::atsamd::pipe::table::PipeTable;
 use atsamd_hal::{
@@ -9,7 +9,8 @@ use atsamd_hal::{
 };
 use embedded_hal::digital::v2::OutputPin;
 
-#[derive(Debug, defmt::Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HostIrq {
     Detached,
     Attached,
@@ -21,15 +22,14 @@ pub enum HostIrq {
     HostStartOfFrame,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, defmt::Format)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HostState {
-    Initialize,
-    WaitForDevice,
-
-    WaitResetComplete,
-    WaitSOF(u64),
-
-    Ready,
+    Init,
+    Disconnected,
+    BusReset,
+    BusSettleUntil(u64),
+    Connected,
     Error,
 }
 
@@ -42,10 +42,8 @@ pub struct HostPins {
 
 impl HostPins {
     pub fn new(
-        dm_pin: gpio::Pa24<Input<Floating>>,
-        dp_pin: gpio::Pa25<Input<Floating>>,
-        sof_pin: Option<gpio::Pa23<Input<Floating>>>,
-        host_enable_pin: Option<gpio::Pa28<Input<Floating>>>,
+        dm_pin: gpio::Pa24<Input<Floating>>, dp_pin: gpio::Pa25<Input<Floating>>,
+        sof_pin: Option<gpio::Pa23<Input<Floating>>>, host_enable_pin: Option<gpio::Pa28<Input<Floating>>>,
     ) -> Self {
         Self {
             dm_pin,
@@ -71,24 +69,18 @@ pub struct HostController {
 
 impl HostController {
     pub fn new(
-        usb: USB,
-        pins: HostPins,
-        port: &mut gpio::Port,
-        clocks: &mut GenericClockController,
-        power: &mut PM,
+        usb: USB, pins: HostPins, port: &mut gpio::Port, clocks: &mut GenericClockController, power: &mut PM,
         after_millis: fn(u64) -> u64,
     ) -> Self {
         power.apbbmask.modify(|_, w| w.usb_().set_bit());
 
         clocks.configure_gclk_divider_and_source(ClockGenId::GCLK6, 1, ClockSource::DFLL48M, false);
-        let gclk6 = clocks
-            .get_gclk(ClockGenId::GCLK6)
-            .expect("Could not get clock 6");
+        let gclk6 = clocks.get_gclk(ClockGenId::GCLK6).expect("Could not get clock 6");
         clocks.usb(&gclk6);
 
         HostController {
             usb,
-            state: HostState::Initialize,
+            state: HostState::Init,
             pipe_table: PipeTable::new(),
 
             _dm_pad: pins.dm_pin.into_function_g(port),
@@ -145,19 +137,14 @@ impl HostController {
                 w.transp().bits(usb_transp_cal());
                 w.trim().bits(usb_trim_cal())
             });
-            self.usb
-                .host()
-                .descadd
-                .write(|w| w.bits(&self.pipe_table as *const _ as u32));
+            self.usb.host().descadd.write(|w| w.bits(&self.pipe_table as *const _ as u32));
         }
 
         self.usb.host().ctrlb.modify(|_, w| w.spdconf().normal());
         self.usb.host().ctrla.modify(|_, w| w.runstdby().set_bit());
 
         if let Some(host_enable_pin) = &mut self.host_enable_pin {
-            host_enable_pin
-                .set_high()
-                .expect("USB Reset [host enable pin]");
+            host_enable_pin.set_high().expect("USB Reset [host enable pin]");
         }
 
         self.usb.host().intenset.write(|w| {
@@ -174,7 +161,6 @@ impl HostController {
         self.usb.host().ctrla.modify(|_, w| w.enable().set_bit());
         while self.usb.host().syncbusy.read().enable().bit_is_set() {}
         self.usb.host().ctrlb.modify(|_, w| w.vbusok().set_bit());
-        debug!("USB Host Reset");
     }
 }
 
@@ -185,32 +171,32 @@ impl UsbHost for HostController {
         let irq = self.next_irq();
 
         match (irq, self.state) {
-            (Some(HostIrq::Detached), _) => self.state = HostState::Initialize,
-            (Some(HostIrq::Attached), HostState::WaitForDevice) => {
+            (Some(HostIrq::Detached), _) => self.state = HostState::Init,
+            (Some(HostIrq::Attached), HostState::Disconnected) => {
                 self.usb.host().ctrlb.modify(|_, w| w.busreset().set_bit());
-                self.state = HostState::WaitResetComplete;
+                self.state = HostState::BusReset;
             }
-            (Some(HostIrq::Reset), HostState::WaitResetComplete) => {
-                // Seems unneccesary, since SOFE will be set immediately after reset according to §32.6.3.3.
+            (Some(HostIrq::Reset), HostState::BusReset) => {
+                // Seems unnecessary, since SOFE will be set immediately after reset according to §32.6.3.3.
                 self.usb.host().ctrlb.modify(|_, w| w.sofe().set_bit());
-                // USB spec requires 20ms of SOF after bus reset.
-                self.state = HostState::WaitSOF((self.after_millis)(20));
+                // USB spec requires 20ms delay after bus reset.
+                self.state = HostState::BusSettleUntil((self.after_millis)(20));
             }
-            (Some(HostIrq::HostStartOfFrame), HostState::WaitSOF(until)) if self.now() >= until => {
-                self.state = HostState::Ready;
+            (Some(HostIrq::HostStartOfFrame), HostState::BusSettleUntil(until)) if self.now() >= until => {
+                self.state = HostState::Connected;
                 host_event = Some(HostEvent::Ready);
             }
             _ => {}
         };
 
-        if self.state == HostState::Initialize {
+        if self.state == HostState::Init {
             self.reset_host();
-            self.state = HostState::WaitForDevice;
+            self.state = HostState::Disconnected;
             host_event = Some(HostEvent::Reset);
         }
 
         if prev_state != self.state {
-            trace!("USB new task state {:?}", self.state)
+            trace!("USB Host: {:?}", self.state)
         }
         host_event
     }
@@ -227,40 +213,24 @@ impl UsbHost for HostController {
     }
 
     fn control_transfer(
-        &mut self,
-        ep: &mut dyn HostEndpoint,
-        bm_request_type: RequestType,
-        b_request: RequestCode,
-        w_value: WValue,
-        w_index: u16,
-        buf: Option<&mut [u8]>,
-    ) -> Result<usize, UsbError> {
-        let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.control_transfer(
-            ep,
-            bm_request_type,
-            b_request,
-            w_value,
-            w_index,
-            buf,
-            self.after_millis,
-        )?;
+        &mut self, endpoint: &mut dyn HostEndpoint, bm_request_type: RequestType, b_request: RequestCode,
+        w_value: WValue, w_index: u16, buf: Option<&mut [u8]>,
+    ) -> Result<usize, HostError> {
+        let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), endpoint);
+        let len =
+            pipe.control_transfer(endpoint, bm_request_type, b_request, w_value, w_index, buf, self.after_millis)?;
         Ok(len)
     }
 
-    fn in_transfer(
-        &mut self,
-        ep: &mut dyn HostEndpoint,
-        buf: &mut [u8],
-    ) -> Result<usize, UsbError> {
-        let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.in_transfer(ep, buf, self.after_millis)?;
+    fn in_transfer(&mut self, endpoint: &mut dyn HostEndpoint, buf: &mut [u8]) -> Result<usize, HostError> {
+        let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), endpoint);
+        let len = pipe.in_transfer(endpoint, buf, self.after_millis)?;
         Ok(len)
     }
 
-    fn out_transfer(&mut self, ep: &mut dyn HostEndpoint, buf: &[u8]) -> Result<usize, UsbError> {
-        let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), ep);
-        let len = pipe.out_transfer(ep, buf, self.after_millis)?;
+    fn out_transfer(&mut self, endpoint: &mut dyn HostEndpoint, buf: &[u8]) -> Result<usize, HostError> {
+        let mut pipe = self.pipe_table.pipe_for(self.usb.host_mut(), endpoint);
+        let len = pipe.out_transfer(endpoint, buf, self.after_millis)?;
         Ok(len)
     }
 }

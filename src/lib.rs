@@ -9,8 +9,13 @@
 
 #![no_std]
 
+#[cfg(feature = "defmt")]
 #[macro_use]
 extern crate defmt;
+
+#[cfg(feature = "log")]
+#[macro_use]
+extern crate log;
 
 #[macro_use]
 extern crate hash32_derive;
@@ -50,14 +55,17 @@ pub use parser::*;
 pub use stack::*;
 
 /// Errors that can be generated when attempting to do a USB transfer.
-#[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UsbError {
-    /// An error that may be retried.
-    Transient(&'static str),
-
-    /// A permanent error.
-    Permanent(&'static str),
-
+    AddressSet,
+    OutOfAddresses,
+    DescriptorTooBig,
+    InvalidConfig,
+    SetInterface(EpProps, HostError),
+    SetAddress(EpProps, HostError),
+    SetConfiguration(EpProps, HostError),
+    GetDescriptor(EpProps, HostError),
     InvalidDescriptor,
     Driver,
     NoDriver,
@@ -67,10 +75,25 @@ pub enum UsbError {
     TooManyEndpoints,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(unused)]
+pub enum HostError {
+    // your. request. is. invalid.
+    InvalidRequest,
+    // NAK means "still no data" and is retryable for bulk
+    Nak,
+    // STALL means "no data" and finishes the transaction
+    Stall,
+    Fail,
+    Toggle,
+    SoftTimeout,
+    HardTimeout,
+}
+
 /// The type of transfer to use when talking to USB devices.
-///
-/// cf §9.6.6 of USB 2.0
-#[derive(Copy, Clone, Debug, PartialEq, Eq, strum_macros::FromRepr, defmt::Format)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, strum_macros::FromRepr)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum TransferType {
     Control = 0,
@@ -89,8 +112,8 @@ impl From<u8> for TransferType {
 
 impl hash32::Hash for TransferType {
     fn hash<H>(&self, state: &mut H)
-        where
-            H: Hasher,
+    where
+        H: Hasher,
     {
         state.write(&[*self as u8])
     }
@@ -113,9 +136,7 @@ pub trait MaxPacketSize {
 }
 
 fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(
-    map: &mut FnvIndexMap<K, V, N>,
-    key: K,
-    new: F,
+    map: &mut FnvIndexMap<K, V, N>, key: K, new: F,
 ) -> Option<&mut V> {
     if !map.contains_key(&key) {
         let _ = map.insert(key, new());

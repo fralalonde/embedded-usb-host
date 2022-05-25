@@ -2,7 +2,8 @@
 
 const MAX_DEVICES: u8 = 127;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, defmt::Format, Hash32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash32)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DevAddress(u8);
 
 pub struct AddressPool {
@@ -28,9 +29,7 @@ const FULL_POOL: u128 = u128::MAX >> 1;
 
 impl AddressPool {
     pub fn new() -> Self {
-        Self {
-            pool_bits: FULL_POOL,
-        }
+        Self { pool_bits: FULL_POOL }
     }
 
     pub fn reset(&mut self) {
