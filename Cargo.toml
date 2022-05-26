@@ -34,7 +34,7 @@ utf16string = { git = "https://github.com/fralalonde/utf16string.git", branch = 
 
 # TODO MIDI driver required crates, make optional
 #spin = "0.9"
-spin = { path = "../spin-rs", features = ["portable_atomic"] }
+spin = { path = "../github/spin-rs", features = ["portable_atomic"] }
 embedded-midi = { git = "https://github.com/fralalonde/embedded-midi.git", branch = "main" }
 #embedded-midi = { path = "../embedded-midi", features = ["defmt"] }
 

@@ -60,12 +60,13 @@ impl Pipe<'_, '_> {
             w_length,
         };
 
+        // SETUP
         self.bank0_set(to_slice_mut(&mut setup_packet), 0, ep.max_packet_size());
         self.sync_tx(ep, PipeToken::Setup, after_millis)?;
 
+        // DATA
         let direction = bm_request_type.direction().ok_or(HostError::InvalidRequest)?;
         let mut transfer_len = 0;
-
         if let Some(buf) = buf {
             transfer_len = match direction {
                 RequestDirection::DeviceToHost => self.in_transfer(ep, buf, after_millis)?,
@@ -73,9 +74,10 @@ impl Pipe<'_, '_> {
             }
         }
 
+        // STATUS
         self.bank0_size(0);
         let token = match direction {
-            // this is the _opposite_ because it is the closing "status" stage of the transfer
+            // reciprocal translation for ACK
             RequestDirection::DeviceToHost => PipeToken::Out,
             RequestDirection::HostToDevice => PipeToken::In,
         };

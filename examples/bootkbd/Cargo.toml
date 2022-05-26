@@ -1,0 +1,39 @@
+[package]
+name = "bootkbd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embedded-hal = "0.2"
+heapless = "0.7"
+nb = "0.1"
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+atsamd-hal = { version = "0.14", features = ["usb", "samd21e-rt"] }
+
+trinket_m0 = { version = "0.11", features = ["usb", "default", "unproven"] }
+
+fugit = "0.3"
+atomic-polyfill = "0.1"
+#spin = "0.9"
+spin = { git = "https://github.com/fralalonde/spin-rs.git", branch = "portable-atomics", features = ["portable_atomic"] }
+
+rtt-target = "0.3"
+rtt-logger = "0.2"
+log = "0.4"
+panic-probe = { version = "0.2", features = ["print-rtt"] }
+
+embedded-usb-host = { path = "../..", features = ["samd21e", "log"], default-features = false }
+
+[profile.dev]
+debug = true
+#opt-level = "z"
+panic = "unwind"
+
+[profile.release]
+opt-level = "z"
+debug = true
+#lto = true
+panic = "abort"
+
+
