@@ -1,24 +1,4 @@
-use crate::{
-    DescriptorType, DevAddress, Direction, HostError, MaxPacketSize, RequestCode, RequestRecipient, TransferType,
-    UsbError, UsbHost,
-};
-
-#[cfg(feature = "defmt")]
-use defmt::Formatter;
-
-pub trait BulkEndpoint: HostEndpoint + Sized {
-    fn bulk_in(&mut self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError> {
-        host.in_transfer(self as &mut dyn HostEndpoint, buffer)
-            .map_err(|err| UsbError::BulkIn(self.ep_props(), err))
-    }
-
-    fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError> {
-        host.out_transfer(self, buffer)
-            .map_err(|err| UsbError::BulkOut(self.ep_props(), err))
-    }
-}
-
-impl BulkEndpoint for Endpoint {}
+use crate::{DevAddress, Direction, MaxPacketSize, TransferType, UsbError, UsbHost};
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -54,21 +34,12 @@ impl Endpoint {
 
 /// Read-only utility structure that captures an endpoint's static properties.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, hash32_derive::Hash32)]
-// #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct EpProps {
     dev_addr: DevAddress,
     ep_addr: EpAddress,
     tr_type: TransferType,
-}
-
-#[cfg(feature = "defmt")]
-impl defmt::Format for EpProps {
-    fn format(&self, fmt: Formatter) {
-        self.dev_addr.format(fmt);
-        self.ep_addr.format(fmt);
-        self.tr_type.format(fmt);
-    }
 }
 
 impl EndpointProperties for EpProps {
@@ -201,5 +172,46 @@ pub trait DataToggle {
         flipped
     }
 }
+
+pub trait BulkEndpoint: HostEndpoint + Sized {
+    fn bulk_in(&mut self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError> {
+        if self.transfer_type() != TransferType::Bulk {
+            return Err(UsbError::TransferTypeMismatch);
+        }
+        if self.direction() != Direction::In {
+            return Err(UsbError::DirectionMismatch);
+        }
+        host.in_transfer(self as &mut dyn HostEndpoint, buffer)
+            .map_err(|err| UsbError::BulkIn(self.ep_props(), err))
+    }
+
+    fn bulk_out(&mut self, host: &mut dyn UsbHost, buffer: &[u8]) -> Result<usize, UsbError> {
+        if self.transfer_type() != TransferType::Bulk {
+            return Err(UsbError::TransferTypeMismatch);
+        }
+        if self.direction() != Direction::Out {
+            return Err(UsbError::DirectionMismatch);
+        }
+        host.out_transfer(self, buffer)
+            .map_err(|err| UsbError::BulkOut(self.ep_props(), err))
+    }
+}
+
+impl BulkEndpoint for Endpoint {}
+
+pub trait InterruptEndpoint: HostEndpoint + Sized {
+    fn interrupt_in(&mut self, host: &mut dyn UsbHost, buffer: &mut [u8]) -> Result<usize, UsbError> {
+        if self.transfer_type() != TransferType::Interrupt {
+            return Err(UsbError::TransferTypeMismatch);
+        }
+        if self.direction() != Direction::In {
+            return Err(UsbError::DirectionMismatch);
+        }
+        host.in_transfer(self as &mut dyn HostEndpoint, buffer)
+            .map_err(|err| UsbError::Interrupt(self.ep_props(), err))
+    }
+}
+
+impl InterruptEndpoint for Endpoint {}
 
 pub trait HostEndpoint: DataToggle + MaxPacketSize + EndpointProperties {}

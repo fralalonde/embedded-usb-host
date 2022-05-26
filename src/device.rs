@@ -1,7 +1,7 @@
 use crate::address::DevAddress;
 use crate::{
     to_slice_mut, ConfigNum, ConfigurationDescriptor, DataToggle, DescriptorParser, DescriptorType, DeviceClass,
-    DeviceDescriptor, EndpointProperties, EpAddress, HostEndpoint, HostError, InterfaceNum, MaxPacketSize, RequestCode,
+    DeviceDescriptor, EndpointProperties, EpAddress, HostEndpoint, InterfaceNum, MaxPacketSize, RequestCode,
     RequestDirection, RequestKind, RequestRecipient, RequestType, TransferType, UsbError, UsbHost, WValue,
 };
 
@@ -39,7 +39,6 @@ pub enum DeviceOps {
 }
 
 #[derive(Debug, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Device {
     device_address: DevAddress,
     state: DeviceState,

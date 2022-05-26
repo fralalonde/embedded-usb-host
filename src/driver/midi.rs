@@ -1,8 +1,8 @@
 use heapless::{FnvIndexMap, Vec};
 
 use crate::{
-    map_entry_mut, ConfigNum, DescriptorParser, DescriptorRef, DevAddress, Device, DeviceClass, Direction, Driver,
-    Endpoint, EndpointProperties, EpProps, InterfaceNum, MaxPacketSize, UsbError, UsbHost,
+    map_entry_mut, BulkEndpoint, ConfigNum, DescriptorParser, DescriptorRef, DevAddress, Device, DeviceClass,
+    Direction, Driver, Endpoint, EndpointProperties, EpProps, InterfaceNum, MaxPacketSize, UsbError, UsbHost,
 };
 use embedded_midi::{MidiPorts, PacketParser, PortHandle, PortId, PortInfo};
 
@@ -74,6 +74,65 @@ impl UsbMidiDriver {
                 }
             },
         );
+    }
+
+    /// Received packets are dispatched to ports according to their cable_num / jack_id
+    fn midi_endpoint_ingress(
+        host: &mut dyn UsbHost, midi: &mut (dyn MidiPorts + Send + Sync), endpoint: &mut Endpoint,
+        jack_port: &mut FnvIndexMap<JackId, PortHandle, 4>,
+    ) {
+        let mut buf = [0; 64];
+        match endpoint.bulk_in(host, &mut buf) {
+            Ok(0) => {
+                debug!("USB MIDI Zero bytes in")
+            }
+            Ok(len) => {
+                let mut parser = PacketParser::default();
+                for b in &buf[..len] {
+                    match parser.advance(*b) {
+                        // TODO receive all packets at once
+                        Ok(Some(packet)) => {
+                            if let Some(port_handle) = jack_port.get(&packet.cable_number()) {
+                                debug!("PACKET from jack {:?}", packet.cable_number());
+                                if let Err(err) = midi.write(port_handle, packet) {
+                                    warn!("Failed to read from MIDI port: {:?}", err);
+                                }
+                            }
+                        }
+                        Err(e) => warn!("USB MIDI Packet Error{:?}", e),
+                        _ => {}
+                    }
+                }
+            }
+            Err(_e) => {
+                warn!("USB MIDI IN Failed {:?}", _e)
+            }
+        }
+    }
+
+    /// Sent packets are edited with the cable_num / jack_id of their MIDI port
+    fn midi_endpoint_egress(
+        host: &mut dyn UsbHost, midi: &mut (dyn MidiPorts + Send + Sync), endpoint: &mut Endpoint,
+        jack_port: &mut FnvIndexMap<JackId, PortHandle, 4>,
+    ) {
+        for (jack_id, port_handle) in jack_port.iter() {
+            loop {
+                // TODO send multiple packets at once
+                match midi.read(port_handle) {
+                    Ok(None) => break,
+                    Ok(Some(mut packet)) => {
+                        packet.set_cable_number(*jack_id);
+                        if let Err(e) = host.out_transfer(endpoint, packet.bytes()) {
+                            warn!("USB OUT failed {:?}", e)
+                        }
+                    }
+                    Err(err) => {
+                        warn!("Failed to write to MIDI port: {:?}", err);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -198,65 +257,16 @@ impl Driver for UsbMidiDriver {
 
     fn run(&mut self, host: &mut dyn UsbHost, device: &mut Device) -> Result<(), UsbError> {
         (self.with_midi)(&mut |midi: &mut (dyn MidiPorts + Send + Sync)| {
-            for ep in self
+            for endpoint in self
                 .device_endpoints
                 .get_mut(&device.device_address())
                 .iter_mut()
                 .flat_map(|eps| eps.iter_mut())
             {
-                if let Some(jack_port) = self.ep_jack_port.get_mut(&ep.ep_props()) {
-                    match ep.direction() {
-                        Direction::Out => {
-                            // sent packets are edited with the cable_num / jack_id of their MIDI port
-                            for (jack_id, port_handle) in jack_port.iter() {
-                                loop {
-                                    // TODO send multiple packets at once
-                                    match midi.read(port_handle) {
-                                        Ok(None) => break,
-                                        Ok(Some(mut packet)) => {
-                                            packet.set_cable_number(*jack_id);
-                                            if let Err(e) = host.out_transfer(ep, packet.bytes()) {
-                                                warn!("USB OUT failed {:?}", e)
-                                            }
-                                        }
-                                        Err(err) => {
-                                            warn!("Failed to write to MIDI port: {:?}", err);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Direction::In => {
-                            // received packets are dispatched to ports according to their cable_num / jack_id
-                            let mut buf = [0; 64];
-                            match host.in_transfer(ep, &mut buf) {
-                                Ok(0) => {
-                                    debug!("USB MIDI Zero bytes in")
-                                }
-                                Ok(len) => {
-                                    let mut pp = PacketParser::default();
-                                    for b in &buf[..len] {
-                                        match pp.advance(*b) {
-                                            // TODO receive all packets at once
-                                            Ok(Some(packet)) => {
-                                                if let Some(port_handle) = jack_port.get(&packet.cable_number()) {
-                                                    debug!("PACKET from jack {:?}", packet.cable_number());
-                                                    if let Err(err) = midi.write(port_handle, packet) {
-                                                        warn!("Failed to read from MIDI port: {:?}", err);
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => warn!("USB MIDI Packet Error{:?}", e),
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                Err(_e) => {
-                                    warn!("USB MIDI IN Failed {:?}", _e)
-                                }
-                            }
-                        }
+                if let Some(jack_port) = self.ep_jack_port.get_mut(&endpoint.ep_props()) {
+                    match endpoint.direction() {
+                        Direction::Out => Self::midi_endpoint_egress(host, midi, endpoint, jack_port),
+                        Direction::In => Self::midi_endpoint_ingress(host, midi, endpoint, jack_port),
                     }
                 }
             }

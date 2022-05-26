@@ -198,7 +198,7 @@ impl UsbHost for HostController {
         }
 
         if prev_state != self.state {
-            trace!("USB Host: {:?}", self.state)
+            debug!("USB Host: {:?}", self.state)
         }
         host_event
     }

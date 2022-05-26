@@ -51,13 +51,13 @@ impl Pipe<'_, '_> {
         &mut self, ep: &mut dyn HostEndpoint, bm_request_type: RequestType, b_request: RequestCode, w_value: WValue,
         w_index: u16, buf: Option<&mut [u8]>, after_millis: fn(u64) -> u64,
     ) -> Result<usize, HostError> {
-        let buflen = buf.as_ref().map_or(0, |b| b.len() as u16);
+        let w_length = buf.as_ref().map_or(0, |b| b.len() as u16);
         let mut setup_packet = SetupPacket {
             bm_request_type,
             b_request,
             w_value,
             w_index,
-            w_length: buflen,
+            w_length,
         };
 
         self.bank0_set(to_slice_mut(&mut setup_packet), 0, ep.max_packet_size());
@@ -74,8 +74,8 @@ impl Pipe<'_, '_> {
         }
 
         self.bank0_size(0);
-
         let token = match direction {
+            // this is the _opposite_ because it is the closing "status" stage of the transfer
             RequestDirection::DeviceToHost => PipeToken::Out,
             RequestDirection::HostToDevice => PipeToken::In,
         };
@@ -199,7 +199,7 @@ impl Pipe<'_, '_> {
                         other => {
                             naks += 1;
                             if naks > NAK_LIMIT {
-                                return Err(err);
+                                return Err(other);
                             }
                         }
                     }

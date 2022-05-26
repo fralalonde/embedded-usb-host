@@ -141,7 +141,7 @@ impl<H: UsbHost> UsbStack<H> {
                 device.set_configuration(host, conf_num)?;
                 desc_parser.rewind();
                 if let Err(err) = driver.register(device, &mut desc_parser) {
-                    warn!("USB Device not registered: {:?} {:?}", device, err);
+                    warn!("USB Device @{:?} not registered:  {:?}", device.device_address(), err);
                 }
                 info!(
                     "USB Device @{:?} registered by driver '{}' for class '{:?}'",

@@ -4,7 +4,7 @@
 
 use crate::{
     to_slice_mut, ConfigNum, DescriptorParser, DescriptorRef, DevAddress, Device, DeviceState, Driver, Endpoint,
-    EndpointProperties, InterfaceNum, MaxPacketSize, UsbError, UsbHost,
+    EndpointProperties, InterfaceNum, InterruptEndpoint, MaxPacketSize, UsbError, UsbHost,
 };
 
 use crate::class::DeviceClass;
@@ -62,7 +62,7 @@ impl Driver for BootKbdDriver {
                         edesc.bm_attributes,
                     );
                     if let Err(err) = self.device_endpoints.insert(device.device_address(), new_ep) {
-                        warn!("Too many devices: {:?} {:?}", device, err)
+                        warn!("Too many devices: {:?}", err)
                     }
                 }
                 _ => {}
@@ -81,7 +81,7 @@ impl Driver for BootKbdDriver {
     }
 
     fn run(&mut self, host: &mut dyn UsbHost, device: &mut Device) -> Result<(), UsbError> {
-        for ep in self.device_endpoints.get_mut(&device.device_address()) {
+        for endpoint in self.device_endpoints.get_mut(&device.device_address()) {
             match device.state() {
                 DeviceState::SetInterface(iface, until) => {
                     if host.delay_done(until) {
@@ -92,7 +92,7 @@ impl Driver for BootKbdDriver {
 
                 DeviceState::Running => {
                     let mut buf = 0u64;
-                    match host.in_transfer(ep, to_slice_mut(&mut buf)) {
+                    match endpoint.interrupt_in(host, to_slice_mut(&mut buf)) {
                         Ok(_size) => {
                             if buf > 0 {
                                 // FIXME don't log, decode and pass to configured callback, see MIDI
