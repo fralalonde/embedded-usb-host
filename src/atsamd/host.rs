@@ -1,12 +1,17 @@
 use crate::{HostEndpoint, HostError, HostEvent, RequestCode, RequestType, UsbError, UsbHost, WValue};
 
 use crate::atsamd::pipe::table::PipeTable;
+
+use bsp::hal;
+use hal::prelude::*;
+
 use atsamd_hal::{
     calibration::{usb_transn_cal, usb_transp_cal, usb_trim_cal},
     clock::{ClockGenId, ClockSource, GenericClockController},
-    gpio::{self, Floating, Input, OpenDrain, Output},
+    gpio::{self},
     target_device::{PM, USB},
 };
+use gpio::v2::{Floating, Input, Output};
 use embedded_hal::digital::v2::OutputPin;
 
 #[derive(Debug)]
@@ -34,16 +39,16 @@ pub enum HostState {
 }
 
 pub struct HostPins {
-    dm_pin: gpio::Pa24<Input<Floating>>,
-    dp_pin: gpio::Pa25<Input<Floating>>,
-    sof_pin: Option<gpio::Pa23<Input<Floating>>>,
-    host_enable_pin: Option<gpio::Pa28<Input<Floating>>>,
+    dm_pin: gpio::v2::PA24,
+    dp_pin: gpio::v2::PA25,
+    sof_pin: Option<gpio::v2::PA23>,
+    host_enable_pin: Option<gpio::v2::PA28>,
 }
 
 impl HostPins {
     pub fn new(
-        dm_pin: gpio::Pa24<Input<Floating>>, dp_pin: gpio::Pa25<Input<Floating>>,
-        sof_pin: Option<gpio::Pa23<Input<Floating>>>, host_enable_pin: Option<gpio::Pa28<Input<Floating>>>,
+        dm_pin: gpio::v2::PA24, dp_pin: gpio::v2::PA25,
+        sof_pin: Option<gpio::v2::PA23>, host_enable_pin: Option<gpio::v2::PA28>,
     ) -> Self {
         Self {
             dm_pin,
@@ -60,10 +65,10 @@ pub struct HostController {
 
     pipe_table: PipeTable,
 
-    _dm_pad: gpio::Pa24<gpio::PfG>,
-    _dp_pad: gpio::Pa25<gpio::PfG>,
-    _sof_pad: Option<gpio::Pa23<gpio::PfG>>,
-    host_enable_pin: Option<gpio::Pa28<Output<OpenDrain>>>,
+    _dm_pad: gpio::v2::PA24,
+    _dp_pad: gpio::v2::PA25,
+    _sof_pad: Option<gpio::v2::PA23>,
+    host_enable_pin: Option<gpio::v2::PA28>,
     now: fn() -> u64,
     after_millis: fn(u64) -> u64,
 }
@@ -84,10 +89,10 @@ impl HostController {
             state: HostState::Init,
             pipe_table: PipeTable::new(),
 
-            _dm_pad: pins.dm_pin.into_function_g(port),
-            _dp_pad: pins.dp_pin.into_function_g(port),
-            _sof_pad: pins.sof_pin.map(|p| p.into_function_g(port)),
-            host_enable_pin: pins.host_enable_pin.map(|p| p.into_open_drain_output(port)),
+            _dm_pad: pins.dm_pin/*.into_function_g(port)*/,
+            _dp_pad: pins.dp_pin/*.into_function_g(port),*/,
+            _sof_pad: pins.sof_pin/*.map(|p| p.into_function_g(port))*/,
+            host_enable_pin: pins.host_enable_pin.into_open_drain_output(port),
             now,
             after_millis,
         }

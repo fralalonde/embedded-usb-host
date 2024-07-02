@@ -2,7 +2,7 @@
 
 const MAX_DEVICES: u8 = 127;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash32)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DevAddress(u8);
 

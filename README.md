@@ -16,7 +16,7 @@ Not yet published on crates.io for obvious maturity reasons.
 
 ## Missing
 - Concurrent, non-blocking transfers (yep, still all single threaded now)
-- STM32 support would be _nice_
+- STM32, RP2040 support would be _nice_
 - Get string descriptors from device (forked UTF16 is ready!)
 - More class drivers (Hub, Mouse, etc.)
 - Alternative Async API

@@ -18,9 +18,6 @@ extern crate defmt;
 extern crate log;
 
 #[macro_use]
-extern crate hash32_derive;
-
-#[macro_use]
 extern crate static_assertions;
 
 pub mod address;
@@ -40,6 +37,7 @@ pub mod atsamd;
 #[cfg(feature = "stm32")]
 pub mod stm32;
 
+use core::hash::Hash;
 pub use address::*;
 pub use class::*;
 pub use control::*;
@@ -48,7 +46,6 @@ pub use descriptor::*;
 pub use device::*;
 pub use driver::*;
 pub use endpoint::*;
-use hash32::Hasher;
 use heapless::FnvIndexMap;
 pub use host::*;
 pub use parser::*;
@@ -97,7 +94,7 @@ pub enum HostError {
 }
 
 /// The type of transfer to use when talking to USB devices.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, strum_macros::FromRepr)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, strum_macros::FromRepr, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum TransferType {
@@ -112,15 +109,6 @@ const TRANSFER_TYPE_MASK: u8 = 0b00000011;
 impl From<u8> for TransferType {
     fn from(ttype: u8) -> Self {
         unsafe { TransferType::from_repr(ttype & TRANSFER_TYPE_MASK).unwrap_unchecked() }
-    }
-}
-
-impl hash32::Hash for TransferType {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: Hasher,
-    {
-        state.write(&[*self as u8])
     }
 }
 
@@ -140,7 +128,7 @@ pub trait MaxPacketSize {
     fn max_packet_size(&self) -> u16;
 }
 
-fn map_entry_mut<K: hash32::Hash + Eq + Copy, V, const N: usize, F: Fn() -> V>(
+fn map_entry_mut<K: Eq + Copy + Hash, V, const N: usize, F: Fn() -> V>(
     map: &mut FnvIndexMap<K, V, N>, key: K, new: F,
 ) -> Option<&mut V> {
     if !map.contains_key(&key) {

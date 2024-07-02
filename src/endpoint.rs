@@ -33,7 +33,7 @@ impl Endpoint {
 }
 
 /// Read-only utility structure that captures an endpoint's static properties.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, hash32_derive::Hash32)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(C)]
 pub struct EpProps {
@@ -99,7 +99,7 @@ const ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 /// Max endpoint address is 0x7F - [0..63] + direction bit
 const ENDPOINT_ADDRESS_MASK: u8 = ENDPOINT_DIRECTION_MASK + ENDPOINT_NUMBER_MASK;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, hash32_derive::Hash32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct EpAddress(u8);
 

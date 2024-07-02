@@ -81,7 +81,7 @@ impl Driver for BootKbdDriver {
     }
 
     fn run(&mut self, host: &mut dyn UsbHost, device: &mut Device) -> Result<(), UsbError> {
-        for endpoint in self.device_endpoints.get_mut(&device.device_address()) {
+        if let Some(endpoint) = self.device_endpoints.get_mut(&device.device_address()) {
             match device.state() {
                 DeviceState::SetInterface(iface, until) => {
                     if host.delay_done(until) {

@@ -47,15 +47,6 @@ pub struct Device {
     error: Option<UsbError>,
 }
 
-impl hash32::Hash for Device {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: hash32::Hasher,
-    {
-        self.device_address.hash(state)
-    }
-}
-
 impl Device {
     pub fn new(max_bus_packet_size: u16) -> Self {
         Self {
